@@ -23,7 +23,16 @@ function base64Url(bytes) {
 }
 
 function pemToArrayBuffer(pem) {
-  const clean = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, '');
+  const normalized = String(pem)
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/\\n/g, '\n');
+
+  const clean = normalized
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
