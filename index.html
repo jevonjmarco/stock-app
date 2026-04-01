@@ -2,165 +2,682 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <title>Stock Control App</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
+  <title>StockFlow Cafe</title>
   <style>
-    body { font-family: Arial; margin:0; background:#f5f7fb; }
-    .container { padding:16px; }
-
-    .tabbar { display:flex; gap:6px; padding:10px; background:#fff; border-bottom:1px solid #ddd; overflow:auto;}
-    .tab { padding:8px 12px; border:0; background:#eee; cursor:pointer; border-radius:8px; }
-    .tab.active { background:#102033; color:#fff; }
-
-    .tab-panel { display:none; padding:16px; }
-    .tab-panel.active { display:block; }
-
-    .card { background:#fff; padding:16px; border-radius:12px; margin-bottom:16px; }
-
-    table { width:100%; border-collapse:collapse; }
-    th,td { padding:10px; border-bottom:1px solid #eee; }
-
-    .row-actions { display:flex; gap:6px; }
-    button { cursor:pointer; }
-
-    .mini-btn { padding:6px 8px; border-radius:6px; border:0; background:#ddd; }
-    .danger-btn { background:#f87171; color:#fff; }
-
-    .primary-btn { background:#102033; color:#fff; padding:8px 12px; border-radius:8px; border:0; }
-
-    .toast {
-      position:fixed;
-      bottom:20px;
-      left:50%;
-      transform:translateX(-50%);
-      background:#102033;
-      color:#fff;
-      padding:10px 14px;
-      border-radius:10px;
-      opacity:0;
-      transition:.2s;
+    :root{
+      --bg:#f5f7fb;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --line:#e5e7eb;
+      --primary:#102033;
+      --primary-2:#1f3a5b;
+      --danger:#b91c1c;
+      --danger-bg:#fee2e2;
+      --success-bg:#dcfce7;
+      --warn-bg:#fef3c7;
+      --shadow:0 8px 24px rgba(15,23,42,.06);
+      --radius:16px;
     }
 
-    .toast.show { opacity:1; }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:Arial, Helvetica, sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
 
+    .topbar{
+      background:#fff;
+      border-bottom:1px solid var(--line);
+      position:sticky;
+      top:0;
+      z-index:20;
+    }
+
+    .topbar-inner{
+      max-width:1200px;
+      margin:0 auto;
+      padding:14px 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+
+    .brand h1{
+      margin:0;
+      font-size:28px;
+      line-height:1.1;
+    }
+
+    .brand p{
+      margin:6px 0 0;
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    .primary-btn,
+    .secondary-btn,
+    .mini-btn,
+    .tab{
+      border:0;
+      cursor:pointer;
+      border-radius:12px;
+      transition:.15s ease;
+      font-weight:600;
+    }
+
+    .primary-btn{
+      background:var(--primary);
+      color:#fff;
+      padding:12px 16px;
+    }
+
+    .primary-btn:hover{background:var(--primary-2)}
+
+    .secondary-btn{
+      background:#eef2ff;
+      color:var(--primary);
+      padding:12px 16px;
+    }
+
+    .mini-btn{
+      background:#eef2f7;
+      color:var(--text);
+      padding:8px 10px;
+      border-radius:10px;
+    }
+
+    .danger-btn{
+      background:var(--danger-bg);
+      color:var(--danger);
+    }
+
+    .page{
+      max-width:1200px;
+      margin:0 auto;
+      padding:16px;
+    }
+
+    .metrics{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:16px;
+      margin-bottom:16px;
+    }
+
+    .metric-card{
+      background:var(--card);
+      border-radius:var(--radius);
+      padding:18px;
+      box-shadow:var(--shadow);
+      border:1px solid #eef2f7;
+    }
+
+    .metric-card .label{
+      color:var(--muted);
+      font-size:14px;
+      margin-bottom:8px;
+    }
+
+    .metric-card .value{
+      font-size:36px;
+      font-weight:700;
+      line-height:1;
+    }
+
+    .tabbar{
+      display:flex;
+      gap:8px;
+      overflow:auto;
+      padding-bottom:8px;
+      margin-bottom:16px;
+    }
+
+    .tab{
+      background:#fff;
+      color:var(--text);
+      padding:12px 16px;
+      white-space:nowrap;
+      box-shadow:var(--shadow);
+      border:1px solid #eef2f7;
+    }
+
+    .tab.active{
+      background:var(--primary);
+      color:#fff;
+    }
+
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+
+    .grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:16px;
+    }
+
+    .card{
+      background:var(--card);
+      border-radius:var(--radius);
+      padding:18px;
+      box-shadow:var(--shadow);
+      border:1px solid #eef2f7;
+      margin-bottom:16px;
+    }
+
+    .card h2{
+      margin:0 0 16px;
+      font-size:20px;
+    }
+
+    .card h3{
+      margin:0 0 10px;
+      font-size:18px;
+    }
+
+    .stack-form{
+      display:grid;
+      gap:12px;
+    }
+
+    .row-2{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:12px;
+    }
+
+    .row-3{
+      display:grid;
+      grid-template-columns:1fr 1fr 1fr;
+      gap:12px;
+    }
+
+    label{
+      display:grid;
+      gap:6px;
+      font-size:14px;
+      color:var(--muted);
+    }
+
+    input, select, textarea{
+      width:100%;
+      padding:12px 12px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+      color:var(--text);
+      font-size:14px;
+      outline:none;
+    }
+
+    input:focus, select:focus, textarea:focus{
+      border-color:#94a3b8;
+    }
+
+    .actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .table-wrap{
+      overflow:auto;
+      border:1px solid #eef2f7;
+      border-radius:14px;
+    }
+
+    .data-table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:760px;
+      background:#fff;
+    }
+
+    .data-table th,
+    .data-table td{
+      padding:12px 12px;
+      border-bottom:1px solid var(--line);
+      text-align:left;
+      vertical-align:top;
+      font-size:14px;
+    }
+
+    .data-table th{
+      background:#f8fafc;
+      color:#334155;
+      position:sticky;
+      top:0;
+      z-index:1;
+    }
+
+    .row-actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    .status-pill{
+      display:inline-flex;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:700;
+    }
+
+    .status-aman{
+      background:var(--success-bg);
+      color:#166534;
+    }
+
+    .status-menipis{
+      background:var(--warn-bg);
+      color:#92400e;
+    }
+
+    .status-habis,
+    .status-selisih{
+      background:var(--danger-bg);
+      color:var(--danger);
+    }
+
+    .toolbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:12px;
+      flex-wrap:wrap;
+    }
+
+    .toolbar .search{
+      max-width:320px;
+      width:100%;
+    }
+
+    .wa-card{
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:16px;
+      margin-bottom:12px;
+      background:#fff;
+    }
+
+    .wa-card h3{
+      margin:0 0 10px;
+      font-size:26px;
+    }
+
+    .wa-card p{
+      margin:0 0 14px;
+      line-height:1.6;
+      white-space:normal;
+    }
+
+    .wa-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom:22px;
+      transform:translateX(-50%);
+      color:#fff;
+      padding:12px 16px;
+      border-radius:12px;
+      opacity:0;
+      pointer-events:none;
+      transition:.2s ease;
+      z-index:50;
+      box-shadow:var(--shadow);
+    }
+
+    .toast.show{opacity:1}
+
+    .muted{
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    @media (max-width: 920px){
+      .metrics{grid-template-columns:1fr 1fr}
+      .grid{grid-template-columns:1fr}
+      .row-2,.row-3{grid-template-columns:1fr}
+      .brand h1{font-size:24px}
+    }
+
+    @media (max-width: 560px){
+      .metrics{grid-template-columns:1fr}
+      .topbar-inner{align-items:flex-start;flex-direction:column}
+    }
   </style>
 </head>
-
 <body>
-
-<div id="tabbar" class="tabbar">
-  <button class="tab active" data-tab="dashboardTab">Dashboard</button>
-  <button class="tab" data-tab="supplierTab">Supplier</button>
-  <button class="tab" data-tab="productTab">Produk</button>
-  <button class="tab" data-tab="waTab">Draft WA</button>
-</div>
-
-<div class="container">
-
-<!-- DASHBOARD -->
-<section id="dashboardTab" class="tab-panel active">
-  <div class="card">
-    <h2>Dashboard</h2>
-    <button id="refreshBtn" class="primary-btn">Refresh</button>
-
-    <p>Supplier: <span id="metricSuppliers">0</span></p>
-    <p>Produk: <span id="metricProducts">0</span></p>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Produk</th>
-          <th>Supplier</th>
-          <th>Stok</th>
-        </tr>
-      </thead>
-      <tbody id="stockTableBody"></tbody>
-    </table>
-  </div>
-</section>
-
-<!-- SUPPLIER -->
-<section id="supplierTab" class="tab-panel">
-  <div class="card">
-    <h2>Tambah Supplier</h2>
-    <form id="supplierForm">
-      <input name="nama_supplier" placeholder="Nama Supplier" required />
-      <input name="no_wa" placeholder="No WA" />
-      <button class="primary-btn">Tambah</button>
-    </form>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="muted">CLOUDFLARE + GOOGLE SHEETS</div>
+        <h1>StockFlow Cafe</h1>
+        <p>Pencatatan stok masuk, keluar, reject, expired, opname, dan draft WA supplier.</p>
+      </div>
+      <button id="refreshBtn" class="primary-btn" type="button">Refresh</button>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Manage Supplier</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Nama</th>
-          <th>WA</th>
-          <th>Status</th>
-          <th>Aksi</th>
-        </tr>
-      </thead>
-      <tbody id="supplierTableBody"></tbody>
-    </table>
-  </div>
-</section>
+  <main class="page">
+    <section class="metrics">
+      <div class="metric-card">
+        <div class="label">Total Supplier</div>
+        <div class="value" id="metricSuppliers">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Total Produk</div>
+        <div class="value" id="metricProducts">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Stok Menipis</div>
+        <div class="value" id="metricLow">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Stok Habis</div>
+        <div class="value" id="metricEmpty">0</div>
+      </div>
+    </section>
 
-<!-- PRODUK -->
-<section id="productTab" class="tab-panel">
-  <div class="card">
-    <h2>Tambah Produk</h2>
-    <form id="productForm">
-      <select name="supplier_id"></select>
-      <input name="nama_produk" placeholder="Nama Produk" required />
-      <button class="primary-btn">Tambah</button>
-    </form>
-  </div>
+    <div id="tabbar" class="tabbar">
+      <button class="tab active" data-tab="dashboardTab" type="button">Dashboard</button>
+      <button class="tab" data-tab="openingTab" type="button">Stok Awal</button>
+      <button class="tab" data-tab="transactionTab" type="button">Transaksi</button>
+      <button class="tab" data-tab="opnameTab" type="button">Opname</button>
+      <button class="tab" data-tab="supplierTab" type="button">Supplier</button>
+      <button class="tab" data-tab="productTab" type="button">Produk</button>
+      <button class="tab" data-tab="waTab" type="button">Draft WA</button>
+    </div>
 
-  <div class="card">
-    <h2>Manage Produk</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Supplier</th>
-          <th>Nama</th>
-          <th>Status</th>
-          <th>Aksi</th>
-        </tr>
-      </thead>
-      <tbody id="productTableBody"></tbody>
-    </table>
-  </div>
-</section>
+    <section id="dashboardTab" class="tab-panel active">
+      <div class="card">
+        <div class="toolbar">
+          <h2>Status Stok</h2>
+          <input id="searchInput" class="search" type="text" placeholder="Cari produk / supplier">
+        </div>
 
-<!-- WA -->
-<section id="waTab" class="tab-panel">
-  <div class="card">
-    <h2>Draft WA</h2>
-    <button id="loadWaBtn" class="primary-btn">Load Draft</button>
-    <div id="waList"></div>
-  </div>
-</section>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Produk</th>
+                <th>Supplier</th>
+                <th>Stok Sistem</th>
+                <th>Opname</th>
+                <th>Selisih</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="stockTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-</div>
+    <section id="openingTab" class="tab-panel">
+      <div class="card">
+        <h2>Input Stok Awal</h2>
+        <form id="openingForm" class="stack-form">
+          <div class="row-3">
+            <label>
+              <span>Tanggal</span>
+              <input type="date" name="tanggal" required>
+            </label>
+            <label>
+              <span>Supplier</span>
+              <select name="supplier_id" required>
+                <option value="">Pilih supplier</option>
+              </select>
+            </label>
+            <label>
+              <span>Produk</span>
+              <select name="product_id" required>
+                <option value="">Pilih produk</option>
+              </select>
+            </label>
+          </div>
 
-<div id="toast" class="toast"></div>
+          <div class="row-2">
+            <label>
+              <span>Qty Awal</span>
+              <input type="number" name="qty" min="0" step="1" required>
+            </label>
+            <label>
+              <span>User Input</span>
+              <input type="text" name="user_input" placeholder="Nama petugas">
+            </label>
+          </div>
 
-<script src="app.js"></script>
+          <div class="actions">
+            <button type="submit" class="primary-btn">Simpan Stok Awal</button>
+          </div>
+        </form>
+      </div>
+    </section>
 
-<script>
-document.querySelectorAll('.tab').forEach(btn=>{
-  btn.onclick=()=>{
-    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'))
-    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'))
-    btn.classList.add('active')
-    document.getElementById(btn.dataset.tab).classList.add('active')
-  }
-})
-</script>
+    <section id="transactionTab" class="tab-panel">
+      <div class="card">
+        <h2>Input Transaksi</h2>
+        <form id="transactionForm" class="stack-form">
+          <div class="row-3">
+            <label>
+              <span>Tanggal</span>
+              <input type="date" name="tanggal" required>
+            </label>
+            <label>
+              <span>Supplier</span>
+              <select name="supplier_id" required>
+                <option value="">Pilih supplier</option>
+              </select>
+            </label>
+            <label>
+              <span>Produk</span>
+              <select name="product_id" required>
+                <option value="">Pilih produk</option>
+              </select>
+            </label>
+          </div>
 
+          <div class="row-3">
+            <label>
+              <span>Jenis</span>
+              <select name="jenis" required>
+                <option value="IN">IN</option>
+                <option value="OUT">OUT</option>
+                <option value="REJECT">REJECT</option>
+                <option value="EXPIRED">EXPIRED</option>
+              </select>
+            </label>
+            <label>
+              <span>Qty</span>
+              <input type="number" name="qty" min="0" step="1" required>
+            </label>
+            <label>
+              <span>User Input</span>
+              <input type="text" name="user_input" placeholder="Nama petugas">
+            </label>
+          </div>
+
+          <label>
+            <span>Keterangan</span>
+            <input type="text" name="keterangan" placeholder="Opsional">
+          </label>
+
+          <div class="actions">
+            <button type="submit" class="primary-btn">Simpan Transaksi</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="opnameTab" class="tab-panel">
+      <div class="card">
+        <h2>Input Opname Fisik</h2>
+        <form id="opnameForm" class="stack-form">
+          <div class="row-3">
+            <label>
+              <span>Tanggal</span>
+              <input type="date" name="tanggal" required>
+            </label>
+            <label>
+              <span>Supplier</span>
+              <select name="supplier_id" required>
+                <option value="">Pilih supplier</option>
+              </select>
+            </label>
+            <label>
+              <span>Produk</span>
+              <select name="product_id" required>
+                <option value="">Pilih produk</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="row-2">
+            <label>
+              <span>Qty Fisik</span>
+              <input type="number" name="qty_fisik" min="0" step="1" required>
+            </label>
+            <label>
+              <span>User Input</span>
+              <input type="text" name="user_input" placeholder="Nama petugas">
+            </label>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="primary-btn">Simpan Opname</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="supplierTab" class="tab-panel">
+      <div class="grid">
+        <div class="card">
+          <h2>Tambah Supplier</h2>
+          <form id="supplierForm" class="stack-form">
+            <label>
+              <span>Nama Supplier</span>
+              <input type="text" name="nama_supplier" placeholder="Nama Supplier" required>
+            </label>
+            <label>
+              <span>No WA</span>
+              <input type="text" name="no_wa" placeholder="62812xxxx">
+            </label>
+            <div class="actions">
+              <button type="submit" class="primary-btn">Tambah Supplier</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Catatan</h2>
+          <p class="muted">
+            Supplier bisa diedit, dinonaktifkan, atau dihapus.
+            Hapus hanya untuk data yang benar-benar salah.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Manage Supplier</h2>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nama</th>
+                <th>WA</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="supplierTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="productTab" class="tab-panel">
+      <div class="grid">
+        <div class="card">
+          <h2>Tambah Produk</h2>
+          <form id="productForm" class="stack-form">
+            <label>
+              <span>Supplier</span>
+              <select name="supplier_id" required>
+                <option value="">Pilih supplier</option>
+              </select>
+            </label>
+            <label>
+              <span>Nama Produk</span>
+              <input type="text" name="nama_produk" placeholder="Nama Produk" required>
+            </label>
+            <div class="actions">
+              <button type="submit" class="primary-btn">Tambah Produk</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Catatan</h2>
+          <p class="muted">
+            Produk bisa diedit, di-discontinue, diaktifkan lagi, atau dihapus.
+            Produk dengan stok masih ada sebaiknya tidak dihapus.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Manage Produk</h2>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Supplier</th>
+                <th>Nama Produk</th>
+                <th>Stok</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="productTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="waTab" class="tab-panel">
+      <div class="card">
+        <h2>Draft WA Supplier</h2>
+        <div class="actions" style="margin-bottom:16px;">
+          <label style="min-width:220px;">
+            <span>Tanggal</span>
+            <input type="date" id="waDate">
+          </label>
+          <button id="loadWaBtn" class="primary-btn" type="button">Load Draft</button>
+        </div>
+        <div id="waList"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
 </body>
 </html>
