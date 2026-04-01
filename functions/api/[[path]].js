@@ -277,7 +277,7 @@ export async function onRequest(context) {
       const date = url.searchParams.get('date');
       if (!date) return json({ ok: false, error: 'Tanggal wajib diisi' }, 400);
       const data = await getAllData(env);
-      const drafts = buildWaDrafts(data.suppliers, data.products, data.txns, date);
+      const drafts = buildWaDrafts(data.suppliers, data.products, data.txns, data.stock, date);
       return json({ ok: true, data: drafts });
     }
 
