@@ -179,12 +179,33 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
 
         if (!productSummary[row.Product_ID]) {
           productSummary[row.Product_ID] = {
-            nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
-            stok_awal: Number(stockInfo?.stok_awal || 0),
-            out_qty: 0,
-            reject_qty: 0,
-            expired_qty: 0,
-            sisa_stok: Number(stockInfo?.stok_sistem || 0),
+  nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
+  stok_awal,
+  masuk_qty,
+  keluar_qty,
+  reject_qty,
+  expired_qty,
+  sisa_stok,
+};
+  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'IN')
+  .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+const keluar_qty = rows
+  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'OUT')
+  .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+const reject_qty = rows
+  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'REJECT')
+  .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+const expired_qty = rows
+  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'EXPIRED')
+  .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+const stok_awal = Number(stockInfo?.stok_awal || 0);
+
+const sisa_stok =
+  stok_awal + masuk_qty - keluar_qty - reject_qty - expired_qty;
           };
         }
 
