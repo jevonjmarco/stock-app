@@ -158,31 +158,66 @@ function computeStock(products, openings, txns, opnames) {
   });
 }
 
-function buildWaDrafts(suppliers, products, txns, date) {
-  const bySupplier = groupBy(txns.filter((x) => `${x.Tanggal_Input}` === date), 'Supplier_ID');
+function buildWaDrafts(suppliers, products, txns, stock, date) {
+  const bySupplier = groupBy(
+    txns.filter((x) => `${x.Tanggal_Input}` === date),
+    'Supplier_ID'
+  );
+
   return suppliers
     .filter((supplier) => supplier.Aktif === 'YA')
     .map((supplier) => {
       const rows = bySupplier[supplier.Supplier_ID] || [];
-      const items = { OUT: [], REJECT: [], EXPIRED: [] };
+      if (!rows.length) return null;
+
+      const productSummary = {};
+
       rows.forEach((row) => {
-        const type = `${row.Jenis}`.toUpperCase();
-        if (!items[type]) return;
+        const type = `${row.Jenis || ''}`.toUpperCase();
         const product = products.find((p) => p.Product_ID === row.Product_ID);
-        items[type].push(`- ${product?.Nama_Produk || row.Nama_Produk}: ${row.Qty}`);
+        const stockInfo = stock.find((s) => s.product_id === row.Product_ID);
+
+        if (!productSummary[row.Product_ID]) {
+          productSummary[row.Product_ID] = {
+            nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
+            stok_awal: Number(stockInfo?.stok_awal || 0),
+            out_qty: 0,
+            reject_qty: 0,
+            expired_qty: 0,
+            sisa_stok: Number(stockInfo?.stok_sistem || 0),
+          };
+        }
+
+        if (type === 'OUT') productSummary[row.Product_ID].out_qty += Number(row.Qty || 0);
+        if (type === 'REJECT') productSummary[row.Product_ID].reject_qty += Number(row.Qty || 0);
+        if (type === 'EXPIRED') productSummary[row.Product_ID].expired_qty += Number(row.Qty || 0);
       });
-      if (!items.OUT.length && !items.REJECT.length && !items.EXPIRED.length) return null;
-      const sections = [];
-      if (items.OUT.length) sections.push(`OUT\n${items.OUT.join('\n')}`);
-      if (items.REJECT.length) sections.push(`REJECT\n${items.REJECT.join('\n')}`);
-      if (items.EXPIRED.length) sections.push(`EXPIRED\n${items.EXPIRED.join('\n')}`);
-      const pesan = `Halo ${supplier.Nama_Supplier},\n\nLaporan stok tanggal ${date}:\n\n${sections.join('\n\n')}\n\nTerima kasih.`;
+
+      const lines = Object.values(productSummary).map((item) => {
+        return [
+          `- ${item.nama_produk}`,
+          `  Stok awal: ${item.stok_awal}`,
+          `  Keluar hari ini: ${item.out_qty}`,
+          `  Reject hari ini: ${item.reject_qty}`,
+          `  Expired hari ini: ${item.expired_qty}`,
+          `  Sisa stok sekarang: ${item.sisa_stok}`,
+        ].join('\n');
+      });
+
+      const pesan =
+        `Halo ${supplier.Nama_Supplier},\n\n` +
+        `Laporan stok tanggal ${date}:\n\n` +
+        `${lines.join('\n\n')}\n\n` +
+        `Terima kasih.`;
+
       return {
         supplier_id: supplier.Supplier_ID,
         nama_supplier: supplier.Nama_Supplier,
         no_wa: supplier.No_WA,
         pesan,
-        link_wa: supplier.No_WA ? `https://wa.me/${supplier.No_WA}?text=${encodeURIComponent(pesan)}` : '#',
+        link_wa: supplier.No_WA
+          ? `https://wa.me/${supplier.No_WA}?text=${encodeURIComponent(pesan)}`
+          : '#',
       };
     })
     .filter(Boolean);
