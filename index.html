@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StockFlow Cafe</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Cloudflare + Google Sheets</p>
+        <h1>StockFlow Cafe</h1>
+        <p class="sub">Pencatatan stok masuk, keluar, reject, expired, opname, dan draft WA supplier.</p>
+      </div>
+      <button id="refreshBtn" class="secondary-btn">Refresh</button>
+    </header>
+
+    <section class="summary-grid" id="summaryGrid">
+      <div class="card metric"><span>Total Supplier</span><strong id="metricSuppliers">0</strong></div>
+      <div class="card metric"><span>Total Produk</span><strong id="metricProducts">0</strong></div>
+      <div class="card metric"><span>Stok Menipis</span><strong id="metricLow">0</strong></div>
+      <div class="card metric"><span>Stok Habis</span><strong id="metricEmpty">0</strong></div>
+    </section>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="stokAwal">Stok Awal</button>
+      <button class="tab" data-tab="transaksi">Transaksi</button>
+      <button class="tab" data-tab="opname">Opname</button>
+      <button class="tab" data-tab="supplier">Supplier</button>
+      <button class="tab" data-tab="produk">Produk</button>
+      <button class="tab" data-tab="wa">Draft WA</button>
+    </nav>
+
+    <main>
+      <section class="tab-panel active" id="dashboard">
+        <div class="card">
+          <div class="panel-head">
+            <h2>Status Stok</h2>
+            <input id="searchInput" type="search" placeholder="Cari produk / supplier" />
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Produk</th>
+                  <th>Supplier</th>
+                  <th>Stok Sistem</th>
+                  <th>Opname</th>
+                  <th>Selisih</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="stockTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="stokAwal">
+        <form class="card form-grid" id="openingForm">
+          <h2>Input Stok Awal</h2>
+          <label>Tanggal<input type="date" name="tanggal" required /></label>
+          <label>Supplier<select name="supplier_id" required></select></label>
+          <label>Produk<select name="product_id" required></select></label>
+          <label>Qty Awal<input type="number" name="qty" min="0" step="1" required /></label>
+          <label>User Input<input type="text" name="user_input" placeholder="Nama petugas" /></label>
+          <label class="full">Catatan<textarea name="catatan" rows="3" placeholder="Opsional"></textarea></label>
+          <button class="primary-btn" type="submit">Simpan Stok Awal</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="transaksi">
+        <form class="card form-grid" id="transactionForm">
+          <h2>Input Transaksi</h2>
+          <label>Tanggal<input type="date" name="tanggal" required /></label>
+          <label>Supplier<select name="supplier_id" required></select></label>
+          <label>Produk<select name="product_id" required></select></label>
+          <label>Jenis
+            <select name="jenis" required>
+              <option value="IN">IN</option>
+              <option value="OUT">OUT</option>
+              <option value="REJECT">REJECT</option>
+              <option value="EXPIRED">EXPIRED</option>
+            </select>
+          </label>
+          <label>Qty<input type="number" name="qty" min="1" step="1" required /></label>
+          <label>User Input<input type="text" name="user_input" placeholder="Nama petugas" /></label>
+          <label class="full">Catatan<textarea name="catatan" rows="3" placeholder="Opsional"></textarea></label>
+          <button class="primary-btn" type="submit">Simpan Transaksi</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="opname">
+        <form class="card form-grid" id="opnameForm">
+          <h2>Input Opname Fisik</h2>
+          <label>Tanggal<input type="date" name="tanggal" required /></label>
+          <label>Supplier<select name="supplier_id" required></select></label>
+          <label>Produk<select name="product_id" required></select></label>
+          <label>Qty Fisik<input type="number" name="qty_fisik" min="0" step="1" required /></label>
+          <label>User Input<input type="text" name="user_input" placeholder="Nama petugas" /></label>
+          <label class="full">Catatan<textarea name="catatan" rows="3" placeholder="Opsional"></textarea></label>
+          <button class="primary-btn" type="submit">Simpan Opname</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="supplier">
+        <form class="card form-grid" id="supplierForm">
+          <h2>Tambah Supplier</h2>
+          <label>Nama Supplier<input type="text" name="nama_supplier" required /></label>
+          <label>No WA<input type="text" name="no_wa" placeholder="62xxxxxxxxxx" /></label>
+          <label>Status
+            <select name="aktif">
+              <option value="YA">YA</option>
+              <option value="TIDAK">TIDAK</option>
+            </select>
+          </label>
+          <button class="primary-btn" type="submit">Tambah Supplier</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="produk">
+        <form class="card form-grid" id="productForm">
+          <h2>Tambah Produk</h2>
+          <label>Supplier<select name="supplier_id" required></select></label>
+          <label>Nama Produk<input type="text" name="nama_produk" required /></label>
+          <label>Status
+            <select name="aktif">
+              <option value="YA">YA</option>
+              <option value="TIDAK">TIDAK</option>
+            </select>
+          </label>
+          <button class="primary-btn" type="submit">Tambah Produk</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="wa">
+        <div class="card wa-tools">
+          <h2>Draft WA Supplier</h2>
+          <div class="inline-form">
+            <label>Tanggal<input type="date" id="waDate" /></label>
+            <button id="loadWaBtn" class="primary-btn" type="button">Load Draft</button>
+          </div>
+          <div id="waList" class="wa-list"></div>
+        </div>
+      </section>
+
+      <section class="toast" id="toast"></section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
