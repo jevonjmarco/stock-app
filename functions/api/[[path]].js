@@ -159,10 +159,8 @@ function computeStock(products, openings, txns, opnames) {
 }
 
 function buildWaDrafts(suppliers, products, txns, stock, date) {
-  const bySupplier = groupBy(
-    txns.filter((x) => `${x.Tanggal_Input}` === date),
-    'Supplier_ID'
-  );
+  const txnsToday = txns.filter((x) => `${x.Tanggal_Input}` === date);
+  const bySupplier = groupBy(txnsToday, 'Supplier_ID');
 
   return suppliers
     .filter((supplier) => supplier.Aktif === 'YA')
@@ -173,58 +171,53 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
       const productSummary = {};
 
       rows.forEach((row) => {
-        const type = `${row.Jenis || ''}`.toUpperCase();
         const product = products.find((p) => p.Product_ID === row.Product_ID);
-        const stockInfo = stock.find((s) => s.product_id === row.Product_ID);
+        const stockInfo = stock.find((s) => s.product_id === row.Product_ID) || {};
 
         if (!productSummary[row.Product_ID]) {
+          const masukHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const keluarHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const rejectHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const expiredHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const stokAwal = Number(stockInfo.stok_awal || 0);
+          const sisaStokSekarang =
+            stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
+
           productSummary[row.Product_ID] = {
-  nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
-  stok_awal,
-  masuk_qty,
-  keluar_qty,
-  reject_qty,
-  expired_qty,
-  sisa_stok,
-};
-  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'IN')
-  .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-const keluar_qty = rows
-  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'OUT')
-  .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-const reject_qty = rows
-  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'REJECT')
-  .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-const expired_qty = rows
-  .filter(r => r.Product_ID === row.Product_ID && r.Jenis === 'EXPIRED')
-  .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-const stok_awal = Number(stockInfo?.stok_awal || 0);
-
-const sisa_stok =
-  stok_awal + masuk_qty - keluar_qty - reject_qty - expired_qty;
+            nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
+            stok_awal: stokAwal,
+            masuk_hari_ini: masukHariIni,
+            keluar_hari_ini: keluarHariIni,
+            reject_hari_ini: rejectHariIni,
+            expired_hari_ini: expiredHariIni,
+            sisa_stok_sekarang: sisaStokSekarang,
           };
         }
-
-        if (type === 'OUT') productSummary[row.Product_ID].out_qty += Number(row.Qty || 0);
-        if (type === 'REJECT') productSummary[row.Product_ID].reject_qty += Number(row.Qty || 0);
-        if (type === 'EXPIRED') productSummary[row.Product_ID].expired_qty += Number(row.Qty || 0);
       });
 
-      const lines = Object.values(productSummary).map((item) => {
-        return [
-  `- ${item.nama_produk}`,
-  `  Stok awal: ${item.stok_awal}`,
-  `  Masuk hari ini: ${item.masuk_qty}`,
-  `  Keluar hari ini: ${item.keluar_qty}`,
-  `  Reject hari ini: ${item.reject_qty}`,
-  `  Expired hari ini: ${item.expired_qty}`,
-  `  Sisa stok sekarang: ${item.sisa_stok}`,
-].join('\n');
-      });
+      const lines = Object.values(productSummary).map((item) =>
+        [
+          `- ${item.nama_produk}`,
+          `  Stok awal: ${item.stok_awal}`,
+          `  Masuk hari ini: ${item.masuk_hari_ini}`,
+          `  Keluar hari ini: ${item.keluar_hari_ini}`,
+          `  Reject hari ini: ${item.reject_hari_ini}`,
+          `  Expired hari ini: ${item.expired_hari_ini}`,
+          `  Sisa stok sekarang: ${item.sisa_stok_sekarang}`,
+        ].join('\n')
+      );
 
       const pesan =
         `Halo ${supplier.Nama_Supplier},\n\n` +
