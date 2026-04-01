@@ -216,13 +216,14 @@ const sisa_stok =
 
       const lines = Object.values(productSummary).map((item) => {
         return [
-          `- ${item.nama_produk}`,
-          `  Stok awal: ${item.stok_awal}`,
-          `  Keluar hari ini: ${item.out_qty}`,
-          `  Reject hari ini: ${item.reject_qty}`,
-          `  Expired hari ini: ${item.expired_qty}`,
-          `  Sisa stok sekarang: ${item.sisa_stok}`,
-        ].join('\n');
+  `- ${item.nama_produk}`,
+  `  Stok awal: ${item.stok_awal}`,
+  `  Masuk hari ini: ${item.masuk_qty}`,
+  `  Keluar hari ini: ${item.keluar_qty}`,
+  `  Reject hari ini: ${item.reject_qty}`,
+  `  Expired hari ini: ${item.expired_qty}`,
+  `  Sisa stok sekarang: ${item.sisa_stok}`,
+].join('\n');
       });
 
       const pesan =
