@@ -401,8 +401,19 @@ function buildBootstrapData(workbook) {
 }
 
 function buildWaDrafts(suppliers, products, txns, stock, date) {
-  const txnsToday = txns.filter((x) => `${x.Tanggal_Input}` === date);
-  const bySupplier = groupBy(txnsToday, 'Supplier_ID');
+  const normalizeDate = (v) => String(v || '').trim().slice(0, 10);
+
+  const txnsToday = txns.filter((x) => normalizeDate(x.Tanggal_Input) === normalizeDate(date));
+
+  const rowsWithSupplier = txnsToday.map((row) => {
+    const product = products.find((p) => p.product_id === row.Product_ID);
+    return {
+      ...row,
+      FinalSupplierID: row.Supplier_ID || product?.supplier_id || '',
+    };
+  });
+
+  const bySupplier = groupBy(rowsWithSupplier, 'FinalSupplierID');
 
   return suppliers
     .filter((supplier) => supplier.aktif === 'YA')
@@ -417,12 +428,25 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         const stockInfo = stock.find((s) => s.product_id === row.Product_ID) || {};
 
         if (!productSummary[row.Product_ID]) {
-          const masukHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN').reduce((a, b) => a + Number(b.Qty || 0), 0);
-          const keluarHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT').reduce((a, b) => a + Number(b.Qty || 0), 0);
-          const rejectHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT').reduce((a, b) => a + Number(b.Qty || 0), 0);
-          const expiredHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const masukHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'IN')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const keluarHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'OUT')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const rejectHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'REJECT')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
+          const expiredHariIni = rows
+            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'EXPIRED')
+            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+
           const stokAwal = Number(stockInfo.stok_awal || 0);
-          const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
+          const sisaStokSekarang =
+            stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
 
           productSummary[row.Product_ID] = {
             nama_produk: product?.nama_produk || row.Nama_Produk || '-',
@@ -450,11 +474,12 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
 
       const pesan =
         `Halo ${supplier.nama_supplier},\n\n` +
-        `Laporan stok tanggal ${date}:\n\n` +
+        `Laporan stok tanggal ${normalizeDate(date)}:\n\n` +
         `${lines.join('\n\n')}\n\n` +
         `Terima kasih.`;
 
       const wa = normalizePhone(supplier.no_wa);
+
       return {
         supplier_id: supplier.supplier_id,
         nama_supplier: supplier.nama_supplier,
