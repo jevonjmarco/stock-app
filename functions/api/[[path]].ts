@@ -1,11 +1,78 @@
-const SHEETS = {
-  suppliers: 'SUPPLIER_MASTER',
-  products: 'PRODUK_MASTER',
-  opening: 'STOK_AWAL',
-  txn: 'TRANSAKSI_STOK',
-  opname: 'OPNAME_FISIK',
-  wa: 'WA_DRAFT',
-};
+export async function onRequest(context) {
+  try {
+    const url = new URL(context.request.url);
+    const path = url.pathname.replace(/^\/api\/?/, '') || 'bootstrap';
+
+    const env = context.env;
+    const SHEET_ID = env.GOOGLE_SHEET_ID;
+    const CLIENT_EMAIL = env.GOOGLE_CLIENT_EMAIL;
+    const PRIVATE_KEY = env.GOOGLE_PRIVATE_KEY;
+
+    if (!SHEET_ID || !CLIENT_EMAIL || !PRIVATE_KEY) {
+      return json({ ok: false, error: 'Environment variables belum lengkap' }, 500);
+    }
+
+    const sheets = createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY });
+
+    if (context.request.method === 'GET' && path === 'cekversi') {
+      return json({ ok: true, version: 'LIVE-FULL-2026' });
+    }
+
+    if (context.request.method === 'GET' && path === 'bootstrap') {
+      const workbook = await readWorkbook(sheets);
+      return json({ ok: true, data: buildBootstrapData(workbook) });
+    }
+
+    if (context.request.method === 'GET' && path === 'wa') {
+      const workbook = await readWorkbook(sheets);
+      const data = buildBootstrapData(workbook);
+      const date = url.searchParams.get('date') || today();
+      return json({ ok: true, data: buildWaDrafts(data.suppliers, data.products, data.txns, data.stock, date) });
+    }
+
+    if (context.request.method === 'GET' && path === 'weekly') {
+      const workbook = await readWorkbook(sheets);
+      const data = buildBootstrapData(workbook);
+      const start = url.searchParams.get('start') || today();
+      const end = url.searchParams.get('end') || today();
+      return json({ ok: true, data: buildWeeklyDrafts(data.suppliers, data.products, data.txns, start, end) });
+    }
+
+    if (context.request.method === 'POST' && path === 'save') {
+      const body = await context.request.json();
+      const action = body.action;
+      const payload = body.payload || {};
+      const workbook = await readWorkbook(sheets);
+
+      switch (action) {
+        case 'saveOpening':
+          return await saveOpening(sheets, workbook, payload);
+        case 'saveTransaction':
+          return await saveTransaction(sheets, workbook, payload);
+        case 'saveOpname':
+          return await saveOpname(sheets, workbook, payload);
+        case 'addSupplier':
+          return await addSupplier(sheets, workbook, payload);
+        case 'updateSupplier':
+          return await updateSupplier(sheets, workbook, payload);
+        case 'deleteSupplier':
+          return await deleteSupplier(sheets, workbook, payload);
+        case 'addProduct':
+          return await addProduct(sheets, workbook, payload);
+        case 'updateProduct':
+          return await updateProduct(sheets, workbook, payload);
+        case 'deleteProduct':
+          return await deleteProduct(sheets, workbook, payload);
+        default:
+          return json({ ok: false, error: `Action tidak dikenali: ${action}` }, 400);
+      }
+    }
+
+    return json({ ok: false, error: 'Route tidak ditemukan' }, 404);
+  } catch (err) {
+    return json({ ok: false, error: err.message || 'Unknown error' }, 500);
+  }
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -17,145 +84,320 @@ function json(data, status = 200) {
   });
 }
 
-function base64Url(bytes) {
-  let string = btoa(String.fromCharCode(...new Uint8Array(bytes)));
-  return string.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function cleanValue(v) {
+  return v == null ? '' : String(v).trim();
+}
+
+function numberValue(v) {
+  const n = Number(v || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function groupBy(arr, key) {
+  return arr.reduce((acc, item) => {
+    const k = item[key];
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(item);
+    return acc;
+  }, {});
+}
+
+function numberFormat(n) {
+  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
+}
+
+function colToLetter(col) {
+  let temp = '';
+  while (col > 0) {
+    let rem = (col - 1) % 26;
+    temp = String.fromCharCode(65 + rem) + temp;
+    col = Math.floor((col - 1) / 26);
+  }
+  return temp;
+}
+
+function a1(sheetName, row, col) {
+  return `${sheetName}!${colToLetter(col)}${row}`;
+}
+
+function nextId(prefix, rows, keyName) {
+  const nums = rows
+    .map((r) => String(r[keyName] || ''))
+    .map((x) => {
+      const m = x.match(/(\d+)$/);
+      return m ? Number(m[1]) : 0;
+    });
+  const max = nums.length ? Math.max(...nums) : 0;
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
+}
+
+function normalizePhone(raw) {
+  let v = cleanValue(raw).replace(/[^\d]/g, '');
+  if (!v) return '';
+  if (v.startsWith('0')) v = '62' + v.slice(1);
+  if (v.startsWith('8')) v = '62' + v;
+  return v;
+}
+
+function ensureSheet(workbook, name) {
+  if (!workbook[name]) throw new Error(`Sheet ${name} tidak ditemukan`);
+  return workbook[name];
+}
+
+function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
+  return {
+    spreadsheetId: SHEET_ID,
+    clientEmail: CLIENT_EMAIL,
+    privateKey: PRIVATE_KEY,
+
+    async accessToken() {
+      return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY);
+    },
+
+    async valuesGet(range) {
+      const token = await this.accessToken();
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Gagal membaca sheet');
+      return data.values || [];
+    },
+
+    async valuesAppend(range, values) {
+      const token = await this.accessToken();
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ values }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Gagal append sheet');
+      return data;
+    },
+
+    async valuesBatchUpdate(dataRows) {
+      const token = await this.accessToken();
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            valueInputOption: 'USER_ENTERED',
+            data: dataRows,
+          }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Gagal update sheet');
+      return data;
+    },
+  };
+}
+
+async function getAccessToken(clientEmail, privateKey) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claimSet = {
+    iss: clientEmail,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now,
+  };
+
+  const enc = (obj) => base64UrlEncode(JSON.stringify(obj));
+  const unsigned = `${enc(header)}.${enc(claimSet)}`;
+  const signature = await signJwt(unsigned, privateKey);
+  const jwt = `${unsigned}.${signature}`;
+
+  const body = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion: jwt,
+  });
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.error || 'Gagal ambil access token');
+  return data.access_token;
+}
+
+function base64UrlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function base64UrlFromBuffer(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function pemToArrayBuffer(pem) {
-  const normalized = String(pem)
-    .trim()
-    .replace(/^"|"$/g, '')
-    .replace(/\\n/g, '\n');
-
+  const normalized = String(pem).trim().replace(/^"|"$/g, '').replace(/\\n/g, '\n');
   const clean = normalized
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\s+/g, '');
-
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
 }
 
-async function getAccessToken(env) {
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const claim = {
-    iss: env.GOOGLE_CLIENT_EMAIL,
-    scope: 'https://www.googleapis.com/auth/spreadsheets',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now,
-  };
-  const enc = new TextEncoder();
-  const unsigned = `${base64Url(enc.encode(JSON.stringify(header)))}.${base64Url(enc.encode(JSON.stringify(claim)))}`;
-  const key = await crypto.subtle.importKey(
+async function signJwt(unsignedJwt, privateKeyPem) {
+  const keyData = pemToArrayBuffer(privateKeyPem);
+  const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
-    pemToArrayBuffer(env.GOOGLE_PRIVATE_KEY),
+    keyData,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']
   );
-  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, enc.encode(unsigned));
-  const jwt = `${unsigned}.${base64Url(signature)}`;
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || 'Gagal membuat access token Google');
-  return data.access_token;
+
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    new TextEncoder().encode(unsignedJwt)
+  );
+
+  return base64UrlFromBuffer(signature);
 }
 
-async function gsFetch(env, path, options = {}) {
-  const token = await getAccessToken(env);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Google Sheets API error');
-  return data;
-}
-
-async function getRange(env, range) {
-  const data = await gsFetch(env, `/values/${encodeURIComponent(range)}`);
-  return data.values || [];
-}
-
-async function appendRow(env, range, row) {
-  return gsFetch(env, `/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    body: JSON.stringify({ values: [row] }),
-  });
-}
-
-function rowsToObjects(rows) {
-  const [header, ...data] = rows;
-  if (!header) return [];
-  return data.filter((row) => row.some((x) => x !== '')).map((row) => {
+async function readSheet(sheets, name) {
+  const values = await sheets.valuesGet(name);
+  const headers = (values[0] || []).map((x) => String(x || '').trim().toLowerCase());
+  const rows = (values.slice(1) || []).map((row) => {
     const obj = {};
-    header.forEach((key, idx) => { obj[key] = row[idx] ?? ''; });
+    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
     return obj;
   });
+  return { headers, rows, raw: values };
 }
 
-function groupBy(array, key) {
-  return array.reduce((acc, item) => {
-    const group = item[key];
-    if (!acc[group]) acc[group] = [];
-    acc[group].push(item);
-    return acc;
-  }, {});
+async function readWorkbook(sheets) {
+  const names = ['SUPPLIER_MASTER', 'PRODUK_MASTER', 'STOK_AWAL', 'TRANSAKSI_STOK', 'OPNAME_FISIK'];
+  const workbook = {};
+  for (const name of names) workbook[name] = await readSheet(sheets, name);
+  return workbook;
 }
 
-function computeStock(products, openings, txns, opnames) {
-  const latestOpname = {};
-  opnames.forEach((row) => {
-    const current = latestOpname[row.Product_ID];
-    if (!current || `${row.Tanggal_Input}` >= `${current.Tanggal_Input}`) latestOpname[row.Product_ID] = row;
-  });
+function buildBootstrapData(workbook) {
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const openingSheet = ensureSheet(workbook, 'STOK_AWAL');
+  const txnSheet = ensureSheet(workbook, 'TRANSAKSI_STOK');
+  const opnameSheet = ensureSheet(workbook, 'OPNAME_FISIK');
 
-  return products.map((product) => {
-    const productId = product.Product_ID;
-    const opening = openings
-      .filter((x) => x.Product_ID === productId)
-      .reduce((sum, x) => sum + Number(x.Qty_Awal || 0), 0);
-    const sums = { IN: 0, OUT: 0, REJECT: 0, EXPIRED: 0 };
-    txns.filter((x) => x.Product_ID === productId).forEach((x) => {
-      const type = `${x.Jenis || ''}`.toUpperCase();
-      if (sums[type] !== undefined) sums[type] += Number(x.Qty || 0);
-    });
-    const stok = opening + sums.IN - sums.OUT - sums.REJECT - sums.EXPIRED;
-    const lastOp = latestOpname[productId];
-    const qtyFisik = lastOp ? Number(lastOp.Qty_Fisik || 0) : null;
-    const selisih = qtyFisik === null ? null : qtyFisik - stok;
-    let status = stok <= 0 ? 'HABIS' : stok <= 3 ? 'MENIPIS' : 'AMAN';
-    if (selisih !== null && selisih !== 0) status = 'SELISIH';
+  const suppliers = supplierSheet.rows.map((r) => ({
+    supplier_id: r.supplier_id || '',
+    nama_supplier: r.nama_supplier || '',
+    no_wa: r.no_wa || '',
+    aktif: (r.aktif || 'YA').toUpperCase(),
+  })).filter((x) => x.supplier_id);
+
+  const products = productSheet.rows.map((r) => ({
+    product_id: r.product_id || '',
+    supplier_id: r.supplier_id || '',
+    nama_supplier: r.nama_supplier || (suppliers.find((s) => s.supplier_id === r.supplier_id)?.nama_supplier || ''),
+    nama_produk: r.nama_produk || '',
+    hpp: numberValue(r.hpp),
+    aktif: (r.aktif || 'YA').toUpperCase(),
+  })).filter((x) => x.product_id);
+
+  const openings = openingSheet.rows.map((r) => ({
+    tanggal: r.tanggal || '',
+    supplier_id: r.supplier_id || '',
+    product_id: r.product_id || '',
+    qty: numberValue(r.qty),
+    user_input: r.user_input || '',
+  }));
+
+  const txns = txnSheet.rows.map((r) => ({
+    Tanggal_Input: r.tanggal || '',
+    Supplier_ID: r.supplier_id || '',
+    Product_ID: r.product_id || '',
+    Jenis: (r.jenis || '').toUpperCase(),
+    Qty: numberValue(r.qty),
+    Keterangan: r.keterangan || '',
+    User_Input: r.user_input || '',
+    Nama_Produk: products.find((p) => p.product_id === r.product_id)?.nama_produk || '',
+  }));
+
+  const opnames = opnameSheet.rows.map((r) => ({
+    tanggal: r.tanggal || '',
+    supplier_id: r.supplier_id || '',
+    product_id: r.product_id || '',
+    qty_fisik: numberValue(r.qty_fisik),
+    user_input: r.user_input || '',
+  }));
+
+  const latestOpeningMap = {};
+  for (const row of openings) latestOpeningMap[row.product_id] = row;
+
+  const latestOpnameMap = {};
+  for (const row of opnames) latestOpnameMap[row.product_id] = row;
+
+  const stock = products.map((p) => {
+    const stok_awal = numberValue(latestOpeningMap[p.product_id]?.qty || 0);
+    const in_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const out_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const reject_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const expired_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a, b) => a + numberValue(b.Qty), 0);
+
+    const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
+    const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
+    const selisih = qty_fisik === '' ? '' : numberValue(qty_fisik) - stok_sistem;
+    const nilai_stok = stok_sistem * numberValue(p.hpp);
+
+    let status = 'AMAN';
+    if (stok_sistem <= 0) status = 'HABIS';
+    else if (stok_sistem <= 3) status = 'MENIPIS';
+    if (qty_fisik !== '' && selisih !== 0) status = 'SELISIH';
+
     return {
-      product_id: productId,
-      supplier_id: product.Supplier_ID,
-      nama_supplier: product.Nama_Supplier,
-      nama_produk: product.Nama_Produk,
-      stok_awal: opening,
-      in_qty: sums.IN,
-      out_qty: sums.OUT,
-      reject_qty: sums.REJECT,
-      expired_qty: sums.EXPIRED,
-      stok_sistem: stok,
-      qty_fisik: qtyFisik,
+      product_id: p.product_id,
+      supplier_id: p.supplier_id,
+      nama_supplier: p.nama_supplier,
+      nama_produk: p.nama_produk,
+      hpp: numberValue(p.hpp),
+      stok_awal,
+      in_qty,
+      out_qty,
+      reject_qty,
+      expired_qty,
+      stok_sistem,
+      qty_fisik,
       selisih,
       status,
+      nilai_stok,
     };
   });
+
+  return { suppliers, products, openings, txns, opnames, stock };
 }
 
 function buildWaDrafts(suppliers, products, txns, stock, date) {
@@ -163,40 +405,27 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
   const bySupplier = groupBy(txnsToday, 'Supplier_ID');
 
   return suppliers
-    .filter((supplier) => supplier.Aktif === 'YA')
+    .filter((supplier) => supplier.aktif === 'YA')
     .map((supplier) => {
-      const rows = bySupplier[supplier.Supplier_ID] || [];
+      const rows = bySupplier[supplier.supplier_id] || [];
       if (!rows.length) return null;
 
       const productSummary = {};
 
       rows.forEach((row) => {
-        const product = products.find((p) => p.Product_ID === row.Product_ID);
+        const product = products.find((p) => p.product_id === row.Product_ID);
         const stockInfo = stock.find((s) => s.product_id === row.Product_ID) || {};
 
         if (!productSummary[row.Product_ID]) {
-          const masukHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const keluarHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const rejectHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const expiredHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
+          const masukHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const keluarHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const rejectHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const expiredHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED').reduce((a, b) => a + Number(b.Qty || 0), 0);
           const stokAwal = Number(stockInfo.stok_awal || 0);
-          const sisaStokSekarang =
-            stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
+          const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
 
           productSummary[row.Product_ID] = {
-            nama_produk: product?.Nama_Produk || row.Nama_Produk || '-',
+            nama_produk: product?.nama_produk || row.Nama_Produk || '-',
             stok_awal: stokAwal,
             masuk_hari_ini: masukHariIni,
             keluar_hari_ini: keluarHariIni,
@@ -220,121 +449,278 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
       );
 
       const pesan =
-        `Halo ${supplier.Nama_Supplier},\n\n` +
+        `Halo ${supplier.nama_supplier},\n\n` +
         `Laporan stok tanggal ${date}:\n\n` +
         `${lines.join('\n\n')}\n\n` +
         `Terima kasih.`;
 
+      const wa = normalizePhone(supplier.no_wa);
       return {
-        supplier_id: supplier.Supplier_ID,
-        nama_supplier: supplier.Nama_Supplier,
-        no_wa: supplier.No_WA,
+        supplier_id: supplier.supplier_id,
+        nama_supplier: supplier.nama_supplier,
+        no_wa: wa,
         pesan,
-        link_wa: supplier.No_WA
-          ? `https://wa.me/${supplier.No_WA}?text=${encodeURIComponent(pesan)}`
-          : '#',
+        link_wa: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}` : '#',
       };
     })
     .filter(Boolean);
 }
 
-async function getAllData(env) {
-  const [supplierRows, productRows, openingRows, txnRows, opnameRows] = await Promise.all([
-    getRange(env, `${SHEETS.suppliers}!A1:D1000`),
-    getRange(env, `${SHEETS.products}!A1:E2000`),
-    getRange(env, `${SHEETS.opening}!A1:H5000`),
-    getRange(env, `${SHEETS.txn}!A1:I5000`),
-    getRange(env, `${SHEETS.opname}!A1:H5000`),
-  ]);
-  const suppliers = rowsToObjects(supplierRows);
-  const products = rowsToObjects(productRows);
-  const openings = rowsToObjects(openingRows);
-  const txns = rowsToObjects(txnRows);
-  const opnames = rowsToObjects(opnameRows);
-  const stock = computeStock(products, openings, txns, opnames);
-  return { suppliers, products, openings, txns, opnames, stock };
+function buildWeeklyDrafts(suppliers, products, txns, start, end) {
+  const txnsPeriod = txns.filter((x) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
+  const bySupplier = groupBy(txnsPeriod, 'Supplier_ID');
+
+  return suppliers
+    .filter((supplier) => supplier.aktif === 'YA')
+    .map((supplier) => {
+      const rows = bySupplier[supplier.supplier_id] || [];
+      if (!rows.length) return null;
+
+      const summary = {};
+      rows.filter((r) => r.Jenis === 'OUT').forEach((row) => {
+        const product = products.find((p) => p.product_id === row.Product_ID);
+        const hpp = Number(product?.hpp || 0);
+
+        if (!summary[row.Product_ID]) {
+          summary[row.Product_ID] = {
+            nama_produk: product?.nama_produk || row.Nama_Produk || '-',
+            hpp,
+            qty_keluar: 0,
+            subtotal: 0,
+          };
+        }
+
+        summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
+        summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
+      });
+
+      const items = Object.values(summary).filter((x) => x.qty_keluar > 0);
+      if (!items.length) return null;
+
+      const total_tagihan = items.reduce((a, b) => a + b.subtotal, 0);
+
+      const lines = items.map((item) =>
+        [
+          `- ${item.nama_produk}`,
+          `  HPP: Rp ${numberFormat(item.hpp)}`,
+          `  Qty keluar: ${item.qty_keluar}`,
+          `  Subtotal: Rp ${numberFormat(item.subtotal)}`,
+        ].join('\n')
+      );
+
+      const pesan =
+        `Halo ${supplier.nama_supplier},\n\n` +
+        `Laporan penjualan mingguan:\n` +
+        `Periode ${start} s/d ${end}\n\n` +
+        `${lines.join('\n\n')}\n\n` +
+        `Total tagihan minggu ini: Rp ${numberFormat(total_tagihan)}\n\n` +
+        `Terima kasih.`;
+
+      const wa = normalizePhone(supplier.no_wa);
+      return {
+        supplier_id: supplier.supplier_id,
+        nama_supplier: supplier.nama_supplier,
+        no_wa: wa,
+        start,
+        end,
+        total_tagihan,
+        pesan,
+        link_wa: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}` : '#',
+      };
+    })
+    .filter(Boolean);
 }
 
-function nextSupplierId(suppliers) {
-  const max = suppliers.reduce((m, s) => Math.max(m, Number((s.Supplier_ID || 'SUP-000').split('-')[1] || 0)), 0);
-  return `SUP-${String(max + 1).padStart(3, '0')}`;
-}
+async function saveOpening(sheets, workbook, payload) {
+  const sheet = ensureSheet(workbook, 'STOK_AWAL');
+  const tanggal = cleanValue(payload.tanggal);
+  const supplier_id = cleanValue(payload.supplier_id);
+  const product_id = cleanValue(payload.product_id);
+  const qty = numberValue(payload.qty);
+  const user_input = cleanValue(payload.user_input);
 
-function nextProductId(products) {
-  const max = products.reduce((m, s) => Math.max(m, Number((s.Product_ID || 'PRD-000').split('-')[1] || 0)), 0);
-  return `PRD-${String(max + 1).padStart(3, '0')}`;
-}
+  if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data stok awal belum lengkap' }, 400);
 
-export async function onRequest(context) {
-  try {
-    const { request, env, params } = context;
-    if (!env.GOOGLE_CLIENT_EMAIL || !env.GOOGLE_PRIVATE_KEY || !env.GOOGLE_SHEET_ID) {
-      return json({ ok: false, error: 'Secrets Google belum diisi di Cloudflare Pages.' }, 500);
-    }
-
-    const path = (params.path || []).join('/');
-    
-    if (path === 'cekversi') {
-  return json({ ok: true, version: 'LIVE-TEST-123' });
-}
-    if (request.method === 'GET' && path === 'bootstrap') {
-      const data = await getAllData(env);
-      return json({ ok: true, data: {
-        suppliers: data.suppliers.map((x) => ({
-          supplier_id: x.Supplier_ID, nama_supplier: x.Nama_Supplier, no_wa: x.No_WA, aktif: x.Aktif,
-        })),
-        products: data.products.map((x) => ({
-          product_id: x.Product_ID, supplier_id: x.Supplier_ID, nama_supplier: x.Nama_Supplier, nama_produk: x.Nama_Produk, aktif: x.Aktif,
-        })),
-        stock: data.stock,
-      }});
-    }
-
-    if (request.method === 'GET' && path === 'wa') {
-      const url = new URL(request.url);
-      const date = url.searchParams.get('date');
-      if (!date) return json({ ok: false, error: 'Tanggal wajib diisi' }, 400);
-      const data = await getAllData(env);
-      const drafts = buildWaDrafts(data.suppliers, data.products, data.txns, data.stock, date);
-      return json({ ok: true, data: drafts });
-    }
-
-    if (request.method === 'POST' && path === 'save') {
-      const body = await request.json();
-      const { action, payload } = body;
-      const data = await getAllData(env);
-      if (action === 'addSupplier') {
-        const id = nextSupplierId(data.suppliers);
-        await appendRow(env, `${SHEETS.suppliers}!A:D`, [id, payload.nama_supplier, payload.no_wa || '', payload.aktif || 'YA']);
-        return json({ ok: true, message: 'Supplier ditambahkan' });
-      }
-      if (action === 'addProduct') {
-        const supplier = data.suppliers.find((x) => x.Supplier_ID === payload.supplier_id);
-        if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 400);
-        const id = nextProductId(data.products);
-        await appendRow(env, `${SHEETS.products}!A:E`, [id, payload.supplier_id, supplier.Nama_Supplier, payload.nama_produk, payload.aktif || 'YA']);
-        return json({ ok: true, message: 'Produk ditambahkan' });
-      }
-      if (action === 'saveOpening') {
-        const product = data.products.find((x) => x.Product_ID === payload.product_id);
-        await appendRow(env, `${SHEETS.opening}!A:H`, [payload.tanggal, payload.product_id, product.Supplier_ID, product.Nama_Supplier, product.Nama_Produk, Number(payload.qty || 0), payload.catatan || '', payload.user_input || '']);
-        return json({ ok: true, message: 'Stok awal tersimpan' });
-      }
-      if (action === 'saveTransaction') {
-        const product = data.products.find((x) => x.Product_ID === payload.product_id);
-        await appendRow(env, `${SHEETS.txn}!A:I`, [payload.tanggal, payload.product_id, product.Supplier_ID, product.Nama_Supplier, product.Nama_Produk, payload.jenis, Number(payload.qty || 0), payload.catatan || '', payload.user_input || '']);
-        return json({ ok: true, message: 'Transaksi tersimpan' });
-      }
-      if (action === 'saveOpname') {
-        const product = data.products.find((x) => x.Product_ID === payload.product_id);
-        await appendRow(env, `${SHEETS.opname}!A:H`, [payload.tanggal, payload.product_id, product.Supplier_ID, product.Nama_Supplier, product.Nama_Produk, Number(payload.qty_fisik || 0), payload.catatan || '', payload.user_input || '']);
-        return json({ ok: true, message: 'Opname tersimpan' });
-      }
-      return json({ ok: false, error: 'Action tidak dikenal' }, 400);
-    }
-
-    return json({ ok: false, error: 'Route tidak ditemukan' }, 404);
-  } catch (error) {
-    return json({ ok: false, error: error.message || 'Server error' }, 500);
+  const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  if (existingIndex >= 0) {
+    const rowNumber = existingIndex + 2;
+    await sheets.valuesBatchUpdate([
+      { range: a1('STOK_AWAL', rowNumber, 1), values: [[tanggal]] },
+      { range: a1('STOK_AWAL', rowNumber, 2), values: [[supplier_id]] },
+      { range: a1('STOK_AWAL', rowNumber, 3), values: [[product_id]] },
+      { range: a1('STOK_AWAL', rowNumber, 4), values: [[qty]] },
+      { range: a1('STOK_AWAL', rowNumber, 5), values: [[user_input]] },
+    ]);
+    return json({ ok: true, message: 'Stok awal diperbarui' });
   }
+
+  await sheets.valuesAppend('STOK_AWAL', [[tanggal, supplier_id, product_id, qty, user_input]]);
+  return json({ ok: true, message: 'Stok awal disimpan' });
+}
+
+async function saveTransaction(sheets, workbook, payload) {
+  const tanggal = cleanValue(payload.tanggal);
+  const supplier_id = cleanValue(payload.supplier_id);
+  const product_id = cleanValue(payload.product_id);
+  const jenis = cleanValue(payload.jenis).toUpperCase();
+  const qty = numberValue(payload.qty);
+  const keterangan = cleanValue(payload.keterangan);
+  const user_input = cleanValue(payload.user_input);
+
+  if (!tanggal || !supplier_id || !product_id || !jenis) {
+    return json({ ok: false, error: 'Data transaksi belum lengkap' }, 400);
+  }
+
+  await sheets.valuesAppend('TRANSAKSI_STOK', [[tanggal, supplier_id, product_id, jenis, qty, keterangan, user_input]]);
+  return json({ ok: true, message: 'Transaksi disimpan' });
+}
+
+async function saveOpname(sheets, workbook, payload) {
+  const sheet = ensureSheet(workbook, 'OPNAME_FISIK');
+  const tanggal = cleanValue(payload.tanggal);
+  const supplier_id = cleanValue(payload.supplier_id);
+  const product_id = cleanValue(payload.product_id);
+  const qty_fisik = numberValue(payload.qty_fisik);
+  const user_input = cleanValue(payload.user_input);
+
+  if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data opname belum lengkap' }, 400);
+
+  const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  if (existingIndex >= 0) {
+    const rowNumber = existingIndex + 2;
+    await sheets.valuesBatchUpdate([
+      { range: a1('OPNAME_FISIK', rowNumber, 1), values: [[tanggal]] },
+      { range: a1('OPNAME_FISIK', rowNumber, 2), values: [[supplier_id]] },
+      { range: a1('OPNAME_FISIK', rowNumber, 3), values: [[product_id]] },
+      { range: a1('OPNAME_FISIK', rowNumber, 4), values: [[qty_fisik]] },
+      { range: a1('OPNAME_FISIK', rowNumber, 5), values: [[user_input]] },
+    ]);
+    return json({ ok: true, message: 'Opname diperbarui' });
+  }
+
+  await sheets.valuesAppend('OPNAME_FISIK', [[tanggal, supplier_id, product_id, qty_fisik, user_input]]);
+  return json({ ok: true, message: 'Opname disimpan' });
+}
+
+async function addSupplier(sheets, workbook, payload) {
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const nama_supplier = cleanValue(payload.nama_supplier);
+  const no_wa = normalizePhone(payload.no_wa);
+  if (!nama_supplier) return json({ ok: false, error: 'Nama supplier wajib diisi' }, 400);
+  const supplier_id = nextId('SUP-', supplierSheet.rows, 'supplier_id');
+  await sheets.valuesAppend('SUPPLIER_MASTER', [[supplier_id, nama_supplier, no_wa, 'YA']]);
+  return json({ ok: true, message: 'Supplier ditambahkan' });
+}
+
+async function updateSupplier(sheets, workbook, payload) {
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const supplier_id = cleanValue(payload.supplier_id);
+  const nama_supplier = cleanValue(payload.nama_supplier);
+  const no_wa = normalizePhone(payload.no_wa);
+  const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
+
+  const idx = supplierSheet.rows.findIndex((r) => String(r.supplier_id) === supplier_id);
+  if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
+
+  const rowNumber = idx + 2;
+  await sheets.valuesBatchUpdate([
+    { range: a1('SUPPLIER_MASTER', rowNumber, 1), values: [[supplier_id]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [[nama_supplier]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [[no_wa]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [[aktif]] },
+  ]);
+  return json({ ok: true, message: 'Supplier berhasil diperbarui' });
+}
+
+async function deleteSupplier(sheets, workbook, payload) {
+  const supplier_id = cleanValue(payload.supplier_id);
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+
+  const hasActiveProducts = productSheet.rows.some(
+    (r) => String(r.supplier_id) === supplier_id && String(r.aktif || 'YA').toUpperCase() === 'YA'
+  );
+  if (hasActiveProducts) {
+    return json({ ok: false, error: 'Supplier masih punya produk aktif. Nonaktifkan / hapus produknya dulu.' }, 400);
+  }
+
+  const idx = supplierSheet.rows.findIndex((r) => String(r.supplier_id) === supplier_id);
+  if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
+
+  const rowNumber = idx + 2;
+  await sheets.valuesBatchUpdate([
+    { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [['[DELETED]']] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [['']] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [['TIDAK']] },
+  ]);
+  return json({ ok: true, message: 'Supplier dinonaktifkan / dihapus' });
+}
+
+async function addProduct(sheets, workbook, payload) {
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+
+  const supplier_id = cleanValue(payload.supplier_id);
+  const nama_produk = cleanValue(payload.nama_produk);
+  const hpp = numberValue(payload.hpp);
+
+  if (!supplier_id || !nama_produk) return json({ ok: false, error: 'Supplier dan nama produk wajib diisi' }, 400);
+
+  const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
+  if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
+
+  const product_id = nextId('PRD-', productSheet.rows, 'product_id');
+  const nama_supplier = supplier.nama_supplier || '';
+
+  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_supplier, nama_produk, hpp, 'YA']]);
+  return json({ ok: true, message: 'Produk ditambahkan' });
+}
+
+async function updateProduct(sheets, workbook, payload) {
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+
+  const product_id = cleanValue(payload.product_id);
+  const supplier_id = cleanValue(payload.supplier_id);
+  const nama_produk = cleanValue(payload.nama_produk);
+  const hpp = numberValue(payload.hpp);
+  const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
+
+  const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
+  const nama_supplier = supplier?.nama_supplier || '';
+
+  const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
+
+  const rowNumber = idx + 2;
+  await sheets.valuesBatchUpdate([
+    { range: a1('PRODUK_MASTER', rowNumber, 1), values: [[product_id]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 2), values: [[supplier_id]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_supplier]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[nama_produk]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[hpp]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [[aktif]] },
+  ]);
+  return json({ ok: true, message: 'Produk berhasil diperbarui' });
+}
+
+async function deleteProduct(sheets, workbook, payload) {
+  const product_id = cleanValue(payload.product_id);
+  const data = buildBootstrapData(workbook);
+  const stockInfo = data.stock.find((x) => x.product_id === product_id);
+
+  if (stockInfo && numberValue(stockInfo.stok_sistem) > 0) {
+    return json({ ok: false, error: 'Produk masih punya stok. Kosongkan dulu sebelum hapus.' }, 400);
+  }
+
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
+
+  const rowNumber = idx + 2;
+  await sheets.valuesBatchUpdate([
+    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [['[DELETED]']] },
+    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [['TIDAK']] },
+  ]);
+  return json({ ok: true, message: 'Produk dihapus / dinonaktifkan' });
 }
