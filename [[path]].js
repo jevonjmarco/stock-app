@@ -24,8 +24,7 @@ export async function onRequest(context) {
       const workbook = await readWorkbook(sheets);
       const data = buildBootstrapData(workbook);
       const date = url.searchParams.get('date') || today();
-      const drafts = buildWaDrafts(data.suppliers, data.products, data.txns, data.stock, date);
-      return json({ ok: true, data: drafts });
+      return json({ ok: true, data: buildWaDrafts(data.suppliers, data.products, data.txns, data.stock, date) });
     }
 
     if (context.request.method === 'GET' && path === 'weekly') {
@@ -33,8 +32,7 @@ export async function onRequest(context) {
       const data = buildBootstrapData(workbook);
       const start = url.searchParams.get('start') || today();
       const end = url.searchParams.get('end') || today();
-      const weekly = buildWeeklyDrafts(data.suppliers, data.products, data.txns, start, end);
-      return json({ ok: true, data: weekly });
+      return json({ ok: true, data: buildWeeklyDrafts(data.suppliers, data.products, data.txns, start, end) });
     }
 
     if (context.request.method === 'POST' && path === 'save') {
@@ -44,35 +42,16 @@ export async function onRequest(context) {
       const workbook = await readWorkbook(sheets);
 
       switch (action) {
-        case 'saveOpening':
-          return await saveOpening(sheets, workbook, payload);
-
-        case 'saveTransaction':
-          return await saveTransaction(sheets, workbook, payload);
-
-        case 'saveOpname':
-          return await saveOpname(sheets, workbook, payload);
-
-        case 'addSupplier':
-          return await addSupplier(sheets, workbook, payload);
-
-        case 'updateSupplier':
-          return await updateSupplier(sheets, workbook, payload);
-
-        case 'deleteSupplier':
-          return await deleteSupplier(sheets, workbook, payload);
-
-        case 'addProduct':
-          return await addProduct(sheets, workbook, payload);
-
-        case 'updateProduct':
-          return await updateProduct(sheets, workbook, payload);
-
-        case 'deleteProduct':
-          return await deleteProduct(sheets, workbook, payload);
-
-        default:
-          return json({ ok: false, error: `Action tidak dikenali: ${action}` }, 400);
+        case 'saveOpening': return await saveOpening(sheets, workbook, payload);
+        case 'saveTransaction': return await saveTransaction(sheets, workbook, payload);
+        case 'saveOpname': return await saveOpname(sheets, workbook, payload);
+        case 'addSupplier': return await addSupplier(sheets, workbook, payload);
+        case 'updateSupplier': return await updateSupplier(sheets, workbook, payload);
+        case 'deleteSupplier': return await deleteSupplier(sheets, workbook, payload);
+        case 'addProduct': return await addProduct(sheets, workbook, payload);
+        case 'updateProduct': return await updateProduct(sheets, workbook, payload);
+        case 'deleteProduct': return await deleteProduct(sheets, workbook, payload);
+        default: return json({ ok: false, error: `Action tidak dikenali: ${action}` }, 400);
       }
     }
 
@@ -82,41 +61,18 @@ export async function onRequest(context) {
   }
 }
 
-/* =========================
-   HELPERS
-========================= */
-
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-    },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function cleanValue(v) {
-  return v == null ? '' : String(v).trim();
-}
-
-function numberValue(v) {
-  const n = Number(v || 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function groupBy(arr, key) {
-  return arr.reduce((acc, item) => {
-    const k = item[key];
-    if (!acc[k]) acc[k] = [];
-    acc[k].push(item);
-    return acc;
-  }, {});
-}
+function today() { return new Date().toISOString().slice(0, 10); }
+function cleanValue(v) { return v == null ? '' : String(v).trim(); }
+function numberValue(v) { const n = Number(v || 0); return Number.isFinite(n) ? n : 0; }
+function groupBy(arr, key) { return arr.reduce((a, x) => ((a[x[key]] ||= []).push(x), a), {}); }
+function numberFormat(n) { return new Intl.NumberFormat('id-ID').format(Number(n || 0)); }
 
 function colToLetter(col) {
   let temp = '';
@@ -127,18 +83,13 @@ function colToLetter(col) {
   }
   return temp;
 }
-
-function a1(sheetName, row, col) {
-  return `${sheetName}!${colToLetter(col)}${row}`;
-}
+function a1(sheetName, row, col) { return `${sheetName}!${colToLetter(col)}${row}`; }
 
 function nextId(prefix, rows, keyName) {
-  const nums = rows
-    .map((r) => String(r[keyName] || ''))
-    .map((x) => {
-      const m = x.match(/(\d+)$/);
-      return m ? Number(m[1]) : 0;
-    });
+  const nums = rows.map((r) => String(r[keyName] || '')).map((x) => {
+    const m = x.match(/(\d+)$/);
+    return m ? Number(m[1]) : 0;
+  });
   const max = nums.length ? Math.max(...nums) : 0;
   return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
@@ -152,19 +103,9 @@ function normalizePhone(raw) {
 }
 
 function ensureSheet(workbook, name) {
-  if (!workbook[name]) {
-    throw new Error(`Sheet ${name} tidak ditemukan`);
-  }
+  if (!workbook[name]) throw new Error(`Sheet ${name} tidak ditemukan`);
   return workbook[name];
 }
-
-function numberFormat(n) {
-  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
-}
-
-/* =========================
-   GOOGLE SHEETS CLIENT
-========================= */
 
 function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
   return {
@@ -172,9 +113,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
     clientEmail: CLIENT_EMAIL,
     privateKey: PRIVATE_KEY,
 
-    async accessToken() {
-      return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY);
-    },
+    async accessToken() { return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY); },
 
     async valuesGet(range) {
       const token = await this.accessToken();
@@ -193,10 +132,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ values }),
         }
       );
@@ -211,14 +147,8 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchUpdate`,
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            valueInputOption: 'USER_ENTERED',
-            data: dataRows,
-          }),
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: dataRows }),
         }
       );
       const data = await res.json();
@@ -262,9 +192,7 @@ async function getAccessToken(clientEmail, privateKey) {
 
 function base64UrlEncode(str) {
   return btoa(unescape(encodeURIComponent(str)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function base64UrlFromBuffer(buffer) {
@@ -275,16 +203,11 @@ function base64UrlFromBuffer(buffer) {
 }
 
 function pemToArrayBuffer(pem) {
-  const normalized = String(pem)
-    .trim()
-    .replace(/^"|"$/g, '')
-    .replace(/\\n/g, '\n');
-
+  const normalized = String(pem).trim().replace(/^"|"$/g, '').replace(/\\n/g, '\n');
   const clean = normalized
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\s+/g, '');
-
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -296,10 +219,7 @@ async function signJwt(unsignedJwt, privateKeyPem) {
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
     keyData,
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      hash: 'SHA-256',
-    },
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']
   );
@@ -313,42 +233,23 @@ async function signJwt(unsignedJwt, privateKeyPem) {
   return base64UrlFromBuffer(signature);
 }
 
-/* =========================
-   WORKBOOK READER
-========================= */
-
 async function readSheet(sheets, name) {
   const values = await sheets.valuesGet(name);
   const headers = (values[0] || []).map((x) => String(x || '').trim().toLowerCase());
   const rows = (values.slice(1) || []).map((row) => {
     const obj = {};
-    headers.forEach((h, i) => {
-      obj[h] = row[i] ?? '';
-    });
+    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
     return obj;
   });
   return { headers, rows, raw: values };
 }
 
 async function readWorkbook(sheets) {
-  const names = [
-    'SUPPLIER_MASTER',
-    'PRODUK_MASTER',
-    'STOK_AWAL',
-    'TRANSAKSI_STOK',
-    'OPNAME_FISIK',
-  ];
-
+  const names = ['SUPPLIER_MASTER', 'PRODUK_MASTER', 'STOK_AWAL', 'TRANSAKSI_STOK', 'OPNAME_FISIK'];
   const workbook = {};
-  for (const name of names) {
-    workbook[name] = await readSheet(sheets, name);
-  }
+  for (const name of names) workbook[name] = await readSheet(sheets, name);
   return workbook;
 }
-
-/* =========================
-   BOOTSTRAP
-========================= */
 
 function buildBootstrapData(workbook) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
@@ -404,33 +305,17 @@ function buildBootstrapData(workbook) {
   }));
 
   const latestOpeningMap = {};
-  for (const row of openings) {
-    latestOpeningMap[row.product_id] = row;
-  }
+  for (const row of openings) latestOpeningMap[row.product_id] = row;
 
   const latestOpnameMap = {};
-  for (const row of opnames) {
-    latestOpnameMap[row.product_id] = row;
-  }
+  for (const row of opnames) latestOpnameMap[row.product_id] = row;
 
   const stock = products.map((p) => {
     const stok_awal = numberValue(latestOpeningMap[p.product_id]?.qty || 0);
-
-    const in_qty = txns
-      .filter((x) => x.Product_ID === p.product_id && x.Jenis === 'IN')
-      .reduce((a, b) => a + numberValue(b.Qty), 0);
-
-    const out_qty = txns
-      .filter((x) => x.Product_ID === p.product_id && x.Jenis === 'OUT')
-      .reduce((a, b) => a + numberValue(b.Qty), 0);
-
-    const reject_qty = txns
-      .filter((x) => x.Product_ID === p.product_id && x.Jenis === 'REJECT')
-      .reduce((a, b) => a + numberValue(b.Qty), 0);
-
-    const expired_qty = txns
-      .filter((x) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED')
-      .reduce((a, b) => a + numberValue(b.Qty), 0);
+    const in_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const out_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const reject_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const expired_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a, b) => a + numberValue(b.Qty), 0);
 
     const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
     const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
@@ -461,19 +346,8 @@ function buildBootstrapData(workbook) {
     };
   });
 
-  return {
-    suppliers,
-    products,
-    openings,
-    txns,
-    opnames,
-    stock,
-  };
+  return { suppliers, products, openings, txns, opnames, stock };
 }
-
-/* =========================
-   WA DRAFT HARIAN
-========================= */
 
 function buildWaDrafts(suppliers, products, txns, stock, date) {
   const txnsToday = txns.filter((x) => `${x.Tanggal_Input}` === date);
@@ -492,25 +366,12 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         const stockInfo = stock.find((s) => s.product_id === row.Product_ID) || {};
 
         if (!productSummary[row.Product_ID]) {
-          const masukHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const keluarHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const rejectHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const expiredHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
+          const masukHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'IN').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const keluarHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'OUT').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const rejectHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'REJECT').reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const expiredHariIni = rows.filter((r) => r.Product_ID === row.Product_ID && `${r.Jenis || ''}`.toUpperCase() === 'EXPIRED').reduce((a, b) => a + Number(b.Qty || 0), 0);
           const stokAwal = Number(stockInfo.stok_awal || 0);
-          const sisaStokSekarang =
-            stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
+          const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
 
           productSummary[row.Product_ID] = {
             nama_produk: product?.nama_produk || row.Nama_Produk || '-',
@@ -549,17 +410,11 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         nama_supplier: supplier.nama_supplier,
         no_wa: wa,
         pesan,
-        link_wa: wa
-          ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}`
-          : '#',
+        link_wa: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}` : '#',
       };
     })
     .filter(Boolean);
 }
-
-/* =========================
-   TAGIHAN MINGGUAN
-========================= */
 
 function buildWeeklyDrafts(suppliers, products, txns, start, end) {
   const txnsPeriod = txns.filter((x) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
@@ -573,24 +428,22 @@ function buildWeeklyDrafts(suppliers, products, txns, start, end) {
 
       const summary = {};
 
-      rows
-        .filter((r) => r.Jenis === 'OUT')
-        .forEach((row) => {
-          const product = products.find((p) => p.product_id === row.Product_ID);
-          const hpp = Number(product?.hpp || 0);
+      rows.filter((r) => r.Jenis === 'OUT').forEach((row) => {
+        const product = products.find((p) => p.product_id === row.Product_ID);
+        const hpp = Number(product?.hpp || 0);
 
-          if (!summary[row.Product_ID]) {
-            summary[row.Product_ID] = {
-              nama_produk: product?.nama_produk || row.Nama_Produk || '-',
-              hpp,
-              qty_keluar: 0,
-              subtotal: 0,
-            };
-          }
+        if (!summary[row.Product_ID]) {
+          summary[row.Product_ID] = {
+            nama_produk: product?.nama_produk || row.Nama_Produk || '-',
+            hpp,
+            qty_keluar: 0,
+            subtotal: 0,
+          };
+        }
 
-          summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
-          summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
-        });
+        summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
+        summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
+      });
 
       const items = Object.values(summary).filter((x) => x.qty_keluar > 0);
       if (!items.length) return null;
@@ -624,17 +477,11 @@ function buildWeeklyDrafts(suppliers, products, txns, start, end) {
         end,
         total_tagihan,
         pesan,
-        link_wa: wa
-          ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}`
-          : '#',
+        link_wa: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}` : '#',
       };
     })
     .filter(Boolean);
 }
-
-/* =========================
-   ACTIONS
-========================= */
 
 async function saveOpening(sheets, workbook, payload) {
   const sheet = ensureSheet(workbook, 'STOK_AWAL');
@@ -644,22 +491,19 @@ async function saveOpening(sheets, workbook, payload) {
   const qty = numberValue(payload.qty);
   const user_input = cleanValue(payload.user_input);
 
-  if (!tanggal || !supplier_id || !product_id) {
-    return json({ ok: false, error: 'Data stok awal belum lengkap' }, 400);
-  }
+  if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data stok awal belum lengkap' }, 400);
 
   const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
 
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
-    const updates = [
+    await sheets.valuesBatchUpdate([
       { range: a1('STOK_AWAL', rowNumber, 1), values: [[tanggal]] },
       { range: a1('STOK_AWAL', rowNumber, 2), values: [[supplier_id]] },
       { range: a1('STOK_AWAL', rowNumber, 3), values: [[product_id]] },
       { range: a1('STOK_AWAL', rowNumber, 4), values: [[qty]] },
       { range: a1('STOK_AWAL', rowNumber, 5), values: [[user_input]] },
-    ];
-    await sheets.valuesBatchUpdate(updates);
+    ]);
     return json({ ok: true, message: 'Stok awal diperbarui' });
   }
 
@@ -692,22 +536,19 @@ async function saveOpname(sheets, workbook, payload) {
   const qty_fisik = numberValue(payload.qty_fisik);
   const user_input = cleanValue(payload.user_input);
 
-  if (!tanggal || !supplier_id || !product_id) {
-    return json({ ok: false, error: 'Data opname belum lengkap' }, 400);
-  }
+  if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data opname belum lengkap' }, 400);
 
   const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
 
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
-    const updates = [
+    await sheets.valuesBatchUpdate([
       { range: a1('OPNAME_FISIK', rowNumber, 1), values: [[tanggal]] },
       { range: a1('OPNAME_FISIK', rowNumber, 2), values: [[supplier_id]] },
       { range: a1('OPNAME_FISIK', rowNumber, 3), values: [[product_id]] },
       { range: a1('OPNAME_FISIK', rowNumber, 4), values: [[qty_fisik]] },
       { range: a1('OPNAME_FISIK', rowNumber, 5), values: [[user_input]] },
-    ];
-    await sheets.valuesBatchUpdate(updates);
+    ]);
     return json({ ok: true, message: 'Opname diperbarui' });
   }
 
@@ -719,14 +560,9 @@ async function addSupplier(sheets, workbook, payload) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const nama_supplier = cleanValue(payload.nama_supplier);
   const no_wa = normalizePhone(payload.no_wa);
-  const aktif = 'YA';
-
-  if (!nama_supplier) {
-    return json({ ok: false, error: 'Nama supplier wajib diisi' }, 400);
-  }
-
+  if (!nama_supplier) return json({ ok: false, error: 'Nama supplier wajib diisi' }, 400);
   const supplier_id = nextId('SUP-', supplierSheet.rows, 'supplier_id');
-  await sheets.valuesAppend('SUPPLIER_MASTER', [[supplier_id, nama_supplier, no_wa, aktif]]);
+  await sheets.valuesAppend('SUPPLIER_MASTER', [[supplier_id, nama_supplier, no_wa, 'YA']]);
   return json({ ok: true, message: 'Supplier ditambahkan' });
 }
 
@@ -741,14 +577,12 @@ async function updateSupplier(sheets, workbook, payload) {
   if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
-  const updates = [
+  await sheets.valuesBatchUpdate([
     { range: a1('SUPPLIER_MASTER', rowNumber, 1), values: [[supplier_id]] },
     { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [[nama_supplier]] },
     { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [[no_wa]] },
     { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [[aktif]] },
-  ];
-
-  await sheets.valuesBatchUpdate(updates);
+  ]);
   return json({ ok: true, message: 'Supplier berhasil diperbarui' });
 }
 
@@ -760,7 +594,6 @@ async function deleteSupplier(sheets, workbook, payload) {
   const hasActiveProducts = productSheet.rows.some(
     (r) => String(r.supplier_id) === supplier_id && String(r.aktif || 'YA').toUpperCase() === 'YA'
   );
-
   if (hasActiveProducts) {
     return json({ ok: false, error: 'Supplier masih punya produk aktif. Nonaktifkan / hapus produknya dulu.' }, 400);
   }
@@ -769,13 +602,11 @@ async function deleteSupplier(sheets, workbook, payload) {
   if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
-
   await sheets.valuesBatchUpdate([
     { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [['[DELETED]']] },
     { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [['']] },
     { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [['TIDAK']] },
   ]);
-
   return json({ ok: true, message: 'Supplier dinonaktifkan / dihapus' });
 }
 
@@ -786,19 +617,14 @@ async function addProduct(sheets, workbook, payload) {
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_produk = cleanValue(payload.nama_produk);
   const hpp = numberValue(payload.hpp);
-  const aktif = 'YA';
 
-  if (!supplier_id || !nama_produk) {
-    return json({ ok: false, error: 'Supplier dan nama produk wajib diisi' }, 400);
-  }
+  if (!supplier_id || !nama_produk) return json({ ok: false, error: 'Supplier dan nama produk wajib diisi' }, 400);
 
   const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
-  if (!supplier) {
-    return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
-  }
+  if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const product_id = nextId('PRD-', productSheet.rows, 'product_id');
-  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_produk, hpp, aktif]]);
+  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_produk, hpp, 'YA']]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
 
@@ -814,15 +640,13 @@ async function updateProduct(sheets, workbook, payload) {
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
-  const updates = [
+  await sheets.valuesBatchUpdate([
     { range: a1('PRODUK_MASTER', rowNumber, 1), values: [[product_id]] },
     { range: a1('PRODUK_MASTER', rowNumber, 2), values: [[supplier_id]] },
     { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_produk]] },
     { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[hpp]] },
     { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[aktif]] },
-  ];
-
-  await sheets.valuesBatchUpdate(updates);
+  ]);
   return json({ ok: true, message: 'Produk berhasil diperbarui' });
 }
 
@@ -840,11 +664,9 @@ async function deleteProduct(sheets, workbook, payload) {
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
-
   await sheets.valuesBatchUpdate([
     { range: a1('PRODUK_MASTER', rowNumber, 3), values: [['[DELETED]']] },
     { range: a1('PRODUK_MASTER', rowNumber, 5), values: [['TIDAK']] },
   ]);
-
   return json({ ok: true, message: 'Produk dihapus / dinonaktifkan' });
 }
