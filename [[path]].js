@@ -16,8 +16,7 @@ export async function onRequest(context) {
 
     if (context.request.method === 'GET' && path === 'bootstrap') {
       const workbook = await readWorkbook(sheets);
-      const data = buildBootstrapData(workbook);
-      return json({ ok: true, data });
+      return json({ ok: true, data: buildBootstrapData(workbook) });
     }
 
     if (context.request.method === 'GET' && path === 'wa') {
@@ -42,16 +41,26 @@ export async function onRequest(context) {
       const workbook = await readWorkbook(sheets);
 
       switch (action) {
-        case 'saveOpening': return await saveOpening(sheets, workbook, payload);
-        case 'saveTransaction': return await saveTransaction(sheets, workbook, payload);
-        case 'saveOpname': return await saveOpname(sheets, workbook, payload);
-        case 'addSupplier': return await addSupplier(sheets, workbook, payload);
-        case 'updateSupplier': return await updateSupplier(sheets, workbook, payload);
-        case 'deleteSupplier': return await deleteSupplier(sheets, workbook, payload);
-        case 'addProduct': return await addProduct(sheets, workbook, payload);
-        case 'updateProduct': return await updateProduct(sheets, workbook, payload);
-        case 'deleteProduct': return await deleteProduct(sheets, workbook, payload);
-        default: return json({ ok: false, error: `Action tidak dikenali: ${action}` }, 400);
+        case 'saveOpening':
+          return await saveOpening(sheets, workbook, payload);
+        case 'saveTransaction':
+          return await saveTransaction(sheets, workbook, payload);
+        case 'saveOpname':
+          return await saveOpname(sheets, workbook, payload);
+        case 'addSupplier':
+          return await addSupplier(sheets, workbook, payload);
+        case 'updateSupplier':
+          return await updateSupplier(sheets, workbook, payload);
+        case 'deleteSupplier':
+          return await deleteSupplier(sheets, workbook, payload);
+        case 'addProduct':
+          return await addProduct(sheets, workbook, payload);
+        case 'updateProduct':
+          return await updateProduct(sheets, workbook, payload);
+        case 'deleteProduct':
+          return await deleteProduct(sheets, workbook, payload);
+        default:
+          return json({ ok: false, error: `Action tidak dikenali: ${action}` }, 400);
       }
     }
 
@@ -61,18 +70,45 @@ export async function onRequest(context) {
   }
 }
 
+/* =========================
+   HELPERS
+========================= */
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
   });
 }
 
-function today() { return new Date().toISOString().slice(0, 10); }
-function cleanValue(v) { return v == null ? '' : String(v).trim(); }
-function numberValue(v) { const n = Number(v || 0); return Number.isFinite(n) ? n : 0; }
-function groupBy(arr, key) { return arr.reduce((a, x) => ((a[x[key]] ||= []).push(x), a), {}); }
-function numberFormat(n) { return new Intl.NumberFormat('id-ID').format(Number(n || 0)); }
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function cleanValue(v) {
+  return v == null ? '' : String(v).trim();
+}
+
+function numberValue(v) {
+  const n = Number(v || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function groupBy(arr, key) {
+  return arr.reduce((acc, item) => {
+    const k = item[key];
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(item);
+    return acc;
+  }, {});
+}
+
+function numberFormat(n) {
+  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
+}
 
 function colToLetter(col) {
   let temp = '';
@@ -83,13 +119,18 @@ function colToLetter(col) {
   }
   return temp;
 }
-function a1(sheetName, row, col) { return `${sheetName}!${colToLetter(col)}${row}`; }
+
+function a1(sheetName, row, col) {
+  return `${sheetName}!${colToLetter(col)}${row}`;
+}
 
 function nextId(prefix, rows, keyName) {
-  const nums = rows.map((r) => String(r[keyName] || '')).map((x) => {
-    const m = x.match(/(\d+)$/);
-    return m ? Number(m[1]) : 0;
-  });
+  const nums = rows
+    .map((r) => String(r[keyName] || ''))
+    .map((x) => {
+      const m = x.match(/(\d+)$/);
+      return m ? Number(m[1]) : 0;
+    });
   const max = nums.length ? Math.max(...nums) : 0;
   return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
@@ -107,13 +148,19 @@ function ensureSheet(workbook, name) {
   return workbook[name];
 }
 
+/* =========================
+   GOOGLE SHEETS CLIENT
+========================= */
+
 function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
   return {
     spreadsheetId: SHEET_ID,
     clientEmail: CLIENT_EMAIL,
     privateKey: PRIVATE_KEY,
 
-    async accessToken() { return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY); },
+    async accessToken() {
+      return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY);
+    },
 
     async valuesGet(range) {
       const token = await this.accessToken();
@@ -132,7 +179,10 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ values }),
         }
       );
@@ -147,8 +197,14 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchUpdate`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: dataRows }),
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            valueInputOption: 'USER_ENTERED',
+            data: dataRows,
+          }),
         }
       );
       const data = await res.json();
@@ -192,7 +248,9 @@ async function getAccessToken(clientEmail, privateKey) {
 
 function base64UrlEncode(str) {
   return btoa(unescape(encodeURIComponent(str)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 }
 
 function base64UrlFromBuffer(buffer) {
@@ -203,11 +261,16 @@ function base64UrlFromBuffer(buffer) {
 }
 
 function pemToArrayBuffer(pem) {
-  const normalized = String(pem).trim().replace(/^"|"$/g, '').replace(/\\n/g, '\n');
+  const normalized = String(pem)
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/\\n/g, '\n');
+
   const clean = normalized
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\s+/g, '');
+
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -233,6 +296,10 @@ async function signJwt(unsignedJwt, privateKeyPem) {
   return base64UrlFromBuffer(signature);
 }
 
+/* =========================
+   READ WORKBOOK
+========================= */
+
 async function readSheet(sheets, name) {
   const values = await sheets.valuesGet(name);
   const headers = (values[0] || []).map((x) => String(x || '').trim().toLowerCase());
@@ -245,11 +312,21 @@ async function readSheet(sheets, name) {
 }
 
 async function readWorkbook(sheets) {
-  const names = ['SUPPLIER_MASTER', 'PRODUK_MASTER', 'STOK_AWAL', 'TRANSAKSI_STOK', 'OPNAME_FISIK'];
+  const names = [
+    'SUPPLIER_MASTER',
+    'PRODUK_MASTER',
+    'STOK_AWAL',
+    'TRANSAKSI_STOK',
+    'OPNAME_FISIK',
+  ];
   const workbook = {};
   for (const name of names) workbook[name] = await readSheet(sheets, name);
   return workbook;
 }
+
+/* =========================
+   BUILD DATA
+========================= */
 
 function buildBootstrapData(workbook) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
@@ -265,17 +342,14 @@ function buildBootstrapData(workbook) {
     aktif: (r.aktif || 'YA').toUpperCase(),
   })).filter((x) => x.supplier_id);
 
-  const products = productSheet.rows.map((r) => {
-    const supplier = suppliers.find((s) => s.supplier_id === r.supplier_id);
-    return {
-      product_id: r.product_id || '',
-      supplier_id: r.supplier_id || '',
-      nama_supplier: supplier?.nama_supplier || '',
-      nama_produk: r.nama_produk || '',
-      hpp: numberValue(r.hpp),
-      aktif: (r.aktif || 'YA').toUpperCase(),
-    };
-  }).filter((x) => x.product_id);
+  const products = productSheet.rows.map((r) => ({
+    product_id: r.product_id || '',
+    supplier_id: r.supplier_id || '',
+    nama_supplier: r.nama_supplier || (suppliers.find((s) => s.supplier_id === r.supplier_id)?.nama_supplier || ''),
+    nama_produk: r.nama_produk || '',
+    hpp: numberValue(r.hpp),
+    aktif: (r.aktif || 'YA').toUpperCase(),
+  })).filter((x) => x.product_id);
 
   const openings = openingSheet.rows.map((r) => ({
     tanggal: r.tanggal || '',
@@ -349,6 +423,10 @@ function buildBootstrapData(workbook) {
   return { suppliers, products, openings, txns, opnames, stock };
 }
 
+/* =========================
+   WA HARIAN
+========================= */
+
 function buildWaDrafts(suppliers, products, txns, stock, date) {
   const txnsToday = txns.filter((x) => `${x.Tanggal_Input}` === date);
   const bySupplier = groupBy(txnsToday, 'Supplier_ID');
@@ -416,6 +494,10 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
     .filter(Boolean);
 }
 
+/* =========================
+   TAGIHAN MINGGUAN
+========================= */
+
 function buildWeeklyDrafts(suppliers, products, txns, start, end) {
   const txnsPeriod = txns.filter((x) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
   const bySupplier = groupBy(txnsPeriod, 'Supplier_ID');
@@ -482,6 +564,10 @@ function buildWeeklyDrafts(suppliers, products, txns, start, end) {
     })
     .filter(Boolean);
 }
+
+/* =========================
+   ACTIONS
+========================= */
 
 async function saveOpening(sheets, workbook, payload) {
   const sheet = ensureSheet(workbook, 'STOK_AWAL');
@@ -624,17 +710,24 @@ async function addProduct(sheets, workbook, payload) {
   if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const product_id = nextId('PRD-', productSheet.rows, 'product_id');
-  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_produk, hpp, 'YA']]);
+  const nama_supplier = supplier.nama_supplier || '';
+
+  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_supplier, nama_produk, hpp, 'YA']]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
 
 async function updateProduct(sheets, workbook, payload) {
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+
   const product_id = cleanValue(payload.product_id);
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_produk = cleanValue(payload.nama_produk);
   const hpp = numberValue(payload.hpp);
   const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
+
+  const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
+  const nama_supplier = supplier?.nama_supplier || '';
 
   const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
@@ -643,9 +736,10 @@ async function updateProduct(sheets, workbook, payload) {
   await sheets.valuesBatchUpdate([
     { range: a1('PRODUK_MASTER', rowNumber, 1), values: [[product_id]] },
     { range: a1('PRODUK_MASTER', rowNumber, 2), values: [[supplier_id]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_produk]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[hpp]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[aktif]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_supplier]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[nama_produk]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[hpp]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [[aktif]] },
   ]);
   return json({ ok: true, message: 'Produk berhasil diperbarui' });
 }
@@ -665,8 +759,8 @@ async function deleteProduct(sheets, workbook, payload) {
 
   const rowNumber = idx + 2;
   await sheets.valuesBatchUpdate([
-    { range: a1('PRODUK_MASTER', rowNumber, 3), values: [['[DELETED]']] },
-    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [['TIDAK']] },
+    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [['[DELETED]']] },
+    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [['TIDAK']] },
   ]);
   return json({ ok: true, message: 'Produk dihapus / dinonaktifkan' });
 }
