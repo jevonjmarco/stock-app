@@ -1,4 +1,4 @@
-export async function onRequest(context) {
+export async function onRequest(context: any) {
   try {
     const url = new URL(context.request.url);
     const path = url.pathname.replace(/^\/api\/?/, '') || 'bootstrap';
@@ -15,12 +15,44 @@ export async function onRequest(context) {
     const sheets = createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY });
 
     if (context.request.method === 'GET' && path === 'cekversi') {
-      return json({ ok: true, version: 'LIVE-FULL-2026' });
+      return json({ ok: true, version: 'LIVE-FULL-FIX-WA-2026' });
     }
 
     if (context.request.method === 'GET' && path === 'bootstrap') {
       const workbook = await readWorkbook(sheets);
       return json({ ok: true, data: buildBootstrapData(workbook) });
+    }
+
+    if (context.request.method === 'GET' && path === 'debugwa') {
+      const workbook = await readWorkbook(sheets);
+      const data = buildBootstrapData(workbook);
+      const date = url.searchParams.get('date') || today();
+
+      const normalizeDate = (v: any) => String(v || '').trim().slice(0, 10);
+      const cleanId = (v: any) => String(v || '').trim();
+
+      const txnsToday = data.txns.filter((x: any) => normalizeDate(x.Tanggal_Input) === normalizeDate(date));
+
+      const mapped = txnsToday.map((row: any) => {
+        const product = data.products.find((p: any) => cleanId(p.product_id) === cleanId(row.Product_ID));
+        return {
+          tanggal: row.Tanggal_Input,
+          product_id: row.Product_ID,
+          supplier_id_transaksi: row.Supplier_ID,
+          supplier_id_produk: product?.supplier_id || '',
+          supplier_final: cleanId(row.Supplier_ID) || cleanId(product?.supplier_id) || '',
+          jenis: row.Jenis,
+          qty: row.Qty,
+          nama_produk: product?.nama_produk || row.Nama_Produk || '',
+        };
+      });
+
+      return json({
+        ok: true,
+        date,
+        total_txns_today: txnsToday.length,
+        mapped,
+      });
     }
 
     if (context.request.method === 'GET' && path === 'wa') {
@@ -69,12 +101,12 @@ export async function onRequest(context) {
     }
 
     return json({ ok: false, error: 'Route tidak ditemukan' }, 404);
-  } catch (err) {
+  } catch (err: any) {
     return json({ ok: false, error: err.message || 'Unknown error' }, 500);
   }
 }
 
-function json(data, status = 200) {
+function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -88,17 +120,17 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function cleanValue(v) {
+function cleanValue(v: any) {
   return v == null ? '' : String(v).trim();
 }
 
-function numberValue(v) {
+function numberValue(v: any) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-function groupBy(arr, key) {
-  return arr.reduce((acc, item) => {
+function groupBy(arr: any[], key: string) {
+  return arr.reduce((acc: any, item: any) => {
     const k = item[key];
     if (!acc[k]) acc[k] = [];
     acc[k].push(item);
@@ -106,25 +138,25 @@ function groupBy(arr, key) {
   }, {});
 }
 
-function numberFormat(n) {
+function numberFormat(n: any) {
   return new Intl.NumberFormat('id-ID').format(Number(n || 0));
 }
 
-function colToLetter(col) {
+function colToLetter(col: number) {
   let temp = '';
   while (col > 0) {
-    let rem = (col - 1) % 26;
+    const rem = (col - 1) % 26;
     temp = String.fromCharCode(65 + rem) + temp;
     col = Math.floor((col - 1) / 26);
   }
   return temp;
 }
 
-function a1(sheetName, row, col) {
+function a1(sheetName: string, row: number, col: number) {
   return `${sheetName}!${colToLetter(col)}${row}`;
 }
 
-function nextId(prefix, rows, keyName) {
+function nextId(prefix: string, rows: any[], keyName: string) {
   const nums = rows
     .map((r) => String(r[keyName] || ''))
     .map((x) => {
@@ -135,7 +167,7 @@ function nextId(prefix, rows, keyName) {
   return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
 
-function normalizePhone(raw) {
+function normalizePhone(raw: any) {
   let v = cleanValue(raw).replace(/[^\d]/g, '');
   if (!v) return '';
   if (v.startsWith('0')) v = '62' + v.slice(1);
@@ -143,12 +175,12 @@ function normalizePhone(raw) {
   return v;
 }
 
-function ensureSheet(workbook, name) {
+function ensureSheet(workbook: any, name: string) {
   if (!workbook[name]) throw new Error(`Sheet ${name} tidak ditemukan`);
   return workbook[name];
 }
 
-function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
+function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }: any) {
   return {
     spreadsheetId: SHEET_ID,
     clientEmail: CLIENT_EMAIL,
@@ -158,7 +190,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
       return await getAccessToken(CLIENT_EMAIL, PRIVATE_KEY);
     },
 
-    async valuesGet(range) {
+    async valuesGet(range: string) {
       const token = await this.accessToken();
       const res = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}`,
@@ -169,7 +201,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
       return data.values || [];
     },
 
-    async valuesAppend(range, values) {
+    async valuesAppend(range: string, values: any[][]) {
       const token = await this.accessToken();
       const res = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
@@ -187,7 +219,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
       return data;
     },
 
-    async valuesBatchUpdate(dataRows) {
+    async valuesBatchUpdate(dataRows: any[]) {
       const token = await this.accessToken();
       const res = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchUpdate`,
@@ -210,7 +242,7 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
   };
 }
 
-async function getAccessToken(clientEmail, privateKey) {
+async function getAccessToken(clientEmail: string, privateKey: string) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
   const claimSet = {
@@ -221,7 +253,7 @@ async function getAccessToken(clientEmail, privateKey) {
     iat: now,
   };
 
-  const enc = (obj) => base64UrlEncode(JSON.stringify(obj));
+  const enc = (obj: any) => base64UrlEncode(JSON.stringify(obj));
   const unsigned = `${enc(header)}.${enc(claimSet)}`;
   const signature = await signJwt(unsigned, privateKey);
   const jwt = `${unsigned}.${signature}`;
@@ -242,21 +274,21 @@ async function getAccessToken(clientEmail, privateKey) {
   return data.access_token;
 }
 
-function base64UrlEncode(str) {
+function base64UrlEncode(str: string) {
   return btoa(unescape(encodeURIComponent(str)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '');
 }
 
-function base64UrlFromBuffer(buffer) {
+function base64UrlFromBuffer(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
   for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function pemToArrayBuffer(pem) {
+function pemToArrayBuffer(pem: string) {
   const normalized = String(pem).trim().replace(/^"|"$/g, '').replace(/\\n/g, '\n');
   const clean = normalized
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
@@ -268,7 +300,7 @@ function pemToArrayBuffer(pem) {
   return bytes.buffer;
 }
 
-async function signJwt(unsignedJwt, privateKeyPem) {
+async function signJwt(unsignedJwt: string, privateKeyPem: string) {
   const keyData = pemToArrayBuffer(privateKeyPem);
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
@@ -287,48 +319,48 @@ async function signJwt(unsignedJwt, privateKeyPem) {
   return base64UrlFromBuffer(signature);
 }
 
-async function readSheet(sheets, name) {
+async function readSheet(sheets: any, name: string) {
   const values = await sheets.valuesGet(name);
-  const headers = (values[0] || []).map((x) => String(x || '').trim().toLowerCase());
-  const rows = (values.slice(1) || []).map((row) => {
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+  const headers = (values[0] || []).map((x: any) => String(x || '').trim().toLowerCase());
+  const rows = (values.slice(1) || []).map((row: any[]) => {
+    const obj: any = {};
+    headers.forEach((h: string, i: number) => { obj[h] = row[i] ?? ''; });
     return obj;
   });
   return { headers, rows, raw: values };
 }
 
-async function readWorkbook(sheets) {
+async function readWorkbook(sheets: any) {
   const names = ['SUPPLIER_MASTER', 'PRODUK_MASTER', 'STOK_AWAL', 'TRANSAKSI_STOK', 'OPNAME_FISIK'];
-  const workbook = {};
+  const workbook: any = {};
   for (const name of names) workbook[name] = await readSheet(sheets, name);
   return workbook;
 }
 
-function buildBootstrapData(workbook) {
+function buildBootstrapData(workbook: any) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const openingSheet = ensureSheet(workbook, 'STOK_AWAL');
   const txnSheet = ensureSheet(workbook, 'TRANSAKSI_STOK');
   const opnameSheet = ensureSheet(workbook, 'OPNAME_FISIK');
 
-  const suppliers = supplierSheet.rows.map((r) => ({
+  const suppliers = supplierSheet.rows.map((r: any) => ({
     supplier_id: r.supplier_id || '',
     nama_supplier: r.nama_supplier || '',
     no_wa: r.no_wa || '',
     aktif: (r.aktif || 'YA').toUpperCase(),
-  })).filter((x) => x.supplier_id);
+  })).filter((x: any) => x.supplier_id);
 
-  const products = productSheet.rows.map((r) => ({
+  const products = productSheet.rows.map((r: any) => ({
     product_id: r.product_id || '',
     supplier_id: r.supplier_id || '',
-    nama_supplier: r.nama_supplier || (suppliers.find((s) => s.supplier_id === r.supplier_id)?.nama_supplier || ''),
+    nama_supplier: r.nama_supplier || (suppliers.find((s: any) => s.supplier_id === r.supplier_id)?.nama_supplier || ''),
     nama_produk: r.nama_produk || '',
     hpp: numberValue(r.hpp),
     aktif: (r.aktif || 'YA').toUpperCase(),
-  })).filter((x) => x.product_id);
+  })).filter((x: any) => x.product_id);
 
-  const openings = openingSheet.rows.map((r) => ({
+  const openings = openingSheet.rows.map((r: any) => ({
     tanggal: r.tanggal || '',
     supplier_id: r.supplier_id || '',
     product_id: r.product_id || '',
@@ -336,7 +368,7 @@ function buildBootstrapData(workbook) {
     user_input: r.user_input || '',
   }));
 
-  const txns = txnSheet.rows.map((r) => ({
+  const txns = txnSheet.rows.map((r: any) => ({
     Tanggal_Input: r.tanggal || '',
     Supplier_ID: r.supplier_id || '',
     Product_ID: r.product_id || '',
@@ -344,10 +376,10 @@ function buildBootstrapData(workbook) {
     Qty: numberValue(r.qty),
     Keterangan: r.keterangan || '',
     User_Input: r.user_input || '',
-    Nama_Produk: products.find((p) => p.product_id === r.product_id)?.nama_produk || '',
+    Nama_Produk: products.find((p: any) => p.product_id === r.product_id)?.nama_produk || '',
   }));
 
-  const opnames = opnameSheet.rows.map((r) => ({
+  const opnames = opnameSheet.rows.map((r: any) => ({
     tanggal: r.tanggal || '',
     supplier_id: r.supplier_id || '',
     product_id: r.product_id || '',
@@ -355,18 +387,18 @@ function buildBootstrapData(workbook) {
     user_input: r.user_input || '',
   }));
 
-  const latestOpeningMap = {};
+  const latestOpeningMap: any = {};
   for (const row of openings) latestOpeningMap[row.product_id] = row;
 
-  const latestOpnameMap = {};
+  const latestOpnameMap: any = {};
   for (const row of opnames) latestOpnameMap[row.product_id] = row;
 
-  const stock = products.map((p) => {
+  const stock = products.map((p: any) => {
     const stok_awal = numberValue(latestOpeningMap[p.product_id]?.qty || 0);
-    const in_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a, b) => a + numberValue(b.Qty), 0);
-    const out_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a, b) => a + numberValue(b.Qty), 0);
-    const reject_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a, b) => a + numberValue(b.Qty), 0);
-    const expired_qty = txns.filter((x) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a, b) => a + numberValue(b.Qty), 0);
+    const in_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const out_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const reject_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const expired_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
 
     const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
     const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
@@ -400,53 +432,49 @@ function buildBootstrapData(workbook) {
   return { suppliers, products, openings, txns, opnames, stock };
 }
 
-function buildWaDrafts(suppliers, products, txns, stock, date) {
-  const normalizeDate = (v) => String(v || '').trim().slice(0, 10);
+function buildWaDrafts(suppliers: any[], products: any[], txns: any[], stock: any[], date: string) {
+  const normalizeDate = (v: any) => String(v || '').trim().slice(0, 10);
+  const cleanId = (v: any) => String(v || '').trim();
 
-  const txnsToday = txns.filter((x) => normalizeDate(x.Tanggal_Input) === normalizeDate(date));
+  const txnsToday = txns.filter((x: any) => normalizeDate(x.Tanggal_Input) === normalizeDate(date));
 
-  const rowsWithSupplier = txnsToday.map((row) => {
-    const product = products.find((p) => p.product_id === row.Product_ID);
+  const rowsWithSupplier = txnsToday.map((row: any) => {
+    const product = products.find((p: any) => cleanId(p.product_id) === cleanId(row.Product_ID));
     return {
       ...row,
-      FinalSupplierID: row.Supplier_ID || product?.supplier_id || '',
+      FinalSupplierID: cleanId(row.Supplier_ID) || cleanId(product?.supplier_id) || '',
     };
   });
 
-  const bySupplier = groupBy(rowsWithSupplier, 'FinalSupplierID');
+  const bySupplier: any = {};
+  rowsWithSupplier.forEach((row: any) => {
+    const key = cleanId(row.FinalSupplierID);
+    if (!key) return;
+    if (!bySupplier[key]) bySupplier[key] = [];
+    bySupplier[key].push(row);
+  });
 
   return suppliers
-    .filter((supplier) => supplier.aktif === 'YA')
-    .map((supplier) => {
-      const rows = bySupplier[supplier.supplier_id] || [];
+    .filter((supplier: any) => String(supplier.aktif || '').trim().toUpperCase() === 'YA')
+    .map((supplier: any) => {
+      const supplierId = cleanId(supplier.supplier_id);
+      const rows = bySupplier[supplierId] || [];
       if (!rows.length) return null;
 
-      const productSummary = {};
+      const productSummary: any = {};
 
-      rows.forEach((row) => {
-        const product = products.find((p) => p.product_id === row.Product_ID);
-        const stockInfo = stock.find((s) => s.product_id === row.Product_ID) || {};
+      rows.forEach((row: any) => {
+        const product = products.find((p: any) => cleanId(p.product_id) === cleanId(row.Product_ID));
+        const stockInfo = stock.find((s: any) => cleanId(s.product_id) === cleanId(row.Product_ID)) || {};
 
         if (!productSummary[row.Product_ID]) {
-          const masukHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'IN')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const keluarHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'OUT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const rejectHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'REJECT')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
-
-          const expiredHariIni = rows
-            .filter((r) => r.Product_ID === row.Product_ID && String(r.Jenis || '').toUpperCase() === 'EXPIRED')
-            .reduce((a, b) => a + Number(b.Qty || 0), 0);
+          const masukHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'IN').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const keluarHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'OUT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const rejectHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'REJECT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const expiredHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'EXPIRED').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
 
           const stokAwal = Number(stockInfo.stok_awal || 0);
-          const sisaStokSekarang =
-            stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
+          const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
 
           productSummary[row.Product_ID] = {
             nama_produk: product?.nama_produk || row.Nama_Produk || '-',
@@ -460,7 +488,7 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         }
       });
 
-      const lines = Object.values(productSummary).map((item) =>
+      const lines = Object.values(productSummary).map((item: any) =>
         [
           `- ${item.nama_produk}`,
           `  Stok awal: ${item.stok_awal}`,
@@ -479,7 +507,6 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         `Terima kasih.`;
 
       const wa = normalizePhone(supplier.no_wa);
-
       return {
         supplier_id: supplier.supplier_id,
         nama_supplier: supplier.nama_supplier,
@@ -491,19 +518,19 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
     .filter(Boolean);
 }
 
-function buildWeeklyDrafts(suppliers, products, txns, start, end) {
-  const txnsPeriod = txns.filter((x) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
+function buildWeeklyDrafts(suppliers: any[], products: any[], txns: any[], start: string, end: string) {
+  const txnsPeriod = txns.filter((x: any) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
   const bySupplier = groupBy(txnsPeriod, 'Supplier_ID');
 
   return suppliers
-    .filter((supplier) => supplier.aktif === 'YA')
-    .map((supplier) => {
+    .filter((supplier: any) => supplier.aktif === 'YA')
+    .map((supplier: any) => {
       const rows = bySupplier[supplier.supplier_id] || [];
       if (!rows.length) return null;
 
-      const summary = {};
-      rows.filter((r) => r.Jenis === 'OUT').forEach((row) => {
-        const product = products.find((p) => p.product_id === row.Product_ID);
+      const summary: any = {};
+      rows.filter((r: any) => r.Jenis === 'OUT').forEach((row: any) => {
+        const product = products.find((p: any) => p.product_id === row.Product_ID);
         const hpp = Number(product?.hpp || 0);
 
         if (!summary[row.Product_ID]) {
@@ -519,12 +546,12 @@ function buildWeeklyDrafts(suppliers, products, txns, start, end) {
         summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
       });
 
-      const items = Object.values(summary).filter((x) => x.qty_keluar > 0);
+      const items = Object.values(summary).filter((x: any) => x.qty_keluar > 0);
       if (!items.length) return null;
 
-      const total_tagihan = items.reduce((a, b) => a + b.subtotal, 0);
+      const total_tagihan = items.reduce((a: number, b: any) => a + b.subtotal, 0);
 
-      const lines = items.map((item) =>
+      const lines = items.map((item: any) =>
         [
           `- ${item.nama_produk}`,
           `  HPP: Rp ${numberFormat(item.hpp)}`,
@@ -556,7 +583,7 @@ function buildWeeklyDrafts(suppliers, products, txns, start, end) {
     .filter(Boolean);
 }
 
-async function saveOpening(sheets, workbook, payload) {
+async function saveOpening(sheets: any, workbook: any, payload: any) {
   const sheet = ensureSheet(workbook, 'STOK_AWAL');
   const tanggal = cleanValue(payload.tanggal);
   const supplier_id = cleanValue(payload.supplier_id);
@@ -566,7 +593,7 @@ async function saveOpening(sheets, workbook, payload) {
 
   if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data stok awal belum lengkap' }, 400);
 
-  const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  const existingIndex = sheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
     await sheets.valuesBatchUpdate([
@@ -583,7 +610,7 @@ async function saveOpening(sheets, workbook, payload) {
   return json({ ok: true, message: 'Stok awal disimpan' });
 }
 
-async function saveTransaction(sheets, workbook, payload) {
+async function saveTransaction(sheets: any, workbook: any, payload: any) {
   const tanggal = cleanValue(payload.tanggal);
   const supplier_id = cleanValue(payload.supplier_id);
   const product_id = cleanValue(payload.product_id);
@@ -600,7 +627,7 @@ async function saveTransaction(sheets, workbook, payload) {
   return json({ ok: true, message: 'Transaksi disimpan' });
 }
 
-async function saveOpname(sheets, workbook, payload) {
+async function saveOpname(sheets: any, workbook: any, payload: any) {
   const sheet = ensureSheet(workbook, 'OPNAME_FISIK');
   const tanggal = cleanValue(payload.tanggal);
   const supplier_id = cleanValue(payload.supplier_id);
@@ -610,7 +637,7 @@ async function saveOpname(sheets, workbook, payload) {
 
   if (!tanggal || !supplier_id || !product_id) return json({ ok: false, error: 'Data opname belum lengkap' }, 400);
 
-  const existingIndex = sheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  const existingIndex = sheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
     await sheets.valuesBatchUpdate([
@@ -627,7 +654,7 @@ async function saveOpname(sheets, workbook, payload) {
   return json({ ok: true, message: 'Opname disimpan' });
 }
 
-async function addSupplier(sheets, workbook, payload) {
+async function addSupplier(sheets: any, workbook: any, payload: any) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const nama_supplier = cleanValue(payload.nama_supplier);
   const no_wa = normalizePhone(payload.no_wa);
@@ -637,14 +664,14 @@ async function addSupplier(sheets, workbook, payload) {
   return json({ ok: true, message: 'Supplier ditambahkan' });
 }
 
-async function updateSupplier(sheets, workbook, payload) {
+async function updateSupplier(sheets: any, workbook: any, payload: any) {
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_supplier = cleanValue(payload.nama_supplier);
   const no_wa = normalizePhone(payload.no_wa);
   const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
 
-  const idx = supplierSheet.rows.findIndex((r) => String(r.supplier_id) === supplier_id);
+  const idx = supplierSheet.rows.findIndex((r: any) => String(r.supplier_id) === supplier_id);
   if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
@@ -657,19 +684,17 @@ async function updateSupplier(sheets, workbook, payload) {
   return json({ ok: true, message: 'Supplier berhasil diperbarui' });
 }
 
-async function deleteSupplier(sheets, workbook, payload) {
+async function deleteSupplier(sheets: any, workbook: any, payload: any) {
   const supplier_id = cleanValue(payload.supplier_id);
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
 
-  const hasActiveProducts = productSheet.rows.some(
-    (r) => String(r.supplier_id) === supplier_id && String(r.aktif || 'YA').toUpperCase() === 'YA'
-  );
+  const hasActiveProducts = productSheet.rows.some((r: any) => String(r.supplier_id) === supplier_id && String(r.aktif || 'YA').toUpperCase() === 'YA');
   if (hasActiveProducts) {
     return json({ ok: false, error: 'Supplier masih punya produk aktif. Nonaktifkan / hapus produknya dulu.' }, 400);
   }
 
-  const idx = supplierSheet.rows.findIndex((r) => String(r.supplier_id) === supplier_id);
+  const idx = supplierSheet.rows.findIndex((r: any) => String(r.supplier_id) === supplier_id);
   if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
@@ -681,7 +706,7 @@ async function deleteSupplier(sheets, workbook, payload) {
   return json({ ok: true, message: 'Supplier dinonaktifkan / dihapus' });
 }
 
-async function addProduct(sheets, workbook, payload) {
+async function addProduct(sheets: any, workbook: any, payload: any) {
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
 
@@ -691,17 +716,16 @@ async function addProduct(sheets, workbook, payload) {
 
   if (!supplier_id || !nama_produk) return json({ ok: false, error: 'Supplier dan nama produk wajib diisi' }, 400);
 
-  const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
+  const supplier = supplierSheet.rows.find((r: any) => String(r.supplier_id) === supplier_id);
   if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const product_id = nextId('PRD-', productSheet.rows, 'product_id');
   const nama_supplier = supplier.nama_supplier || '';
-
   await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_supplier, nama_produk, hpp, 'YA']]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
 
-async function updateProduct(sheets, workbook, payload) {
+async function updateProduct(sheets: any, workbook: any, payload: any) {
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
 
@@ -711,10 +735,10 @@ async function updateProduct(sheets, workbook, payload) {
   const hpp = numberValue(payload.hpp);
   const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
 
-  const supplier = supplierSheet.rows.find((r) => String(r.supplier_id) === supplier_id);
+  const supplier = supplierSheet.rows.find((r: any) => String(r.supplier_id) === supplier_id);
   const nama_supplier = supplier?.nama_supplier || '';
 
-  const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  const idx = productSheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
@@ -729,17 +753,17 @@ async function updateProduct(sheets, workbook, payload) {
   return json({ ok: true, message: 'Produk berhasil diperbarui' });
 }
 
-async function deleteProduct(sheets, workbook, payload) {
+async function deleteProduct(sheets: any, workbook: any, payload: any) {
   const product_id = cleanValue(payload.product_id);
   const data = buildBootstrapData(workbook);
-  const stockInfo = data.stock.find((x) => x.product_id === product_id);
+  const stockInfo = data.stock.find((x: any) => x.product_id === product_id);
 
   if (stockInfo && numberValue(stockInfo.stok_sistem) > 0) {
     return json({ ok: false, error: 'Produk masih punya stok. Kosongkan dulu sebelum hapus.' }, 400);
   }
 
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
-  const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
+  const idx = productSheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
