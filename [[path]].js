@@ -28,6 +28,15 @@ export async function onRequest(context) {
       return json({ ok: true, data: drafts });
     }
 
+    if (context.request.method === 'GET' && path === 'weekly') {
+      const workbook = await readWorkbook(sheets);
+      const data = buildBootstrapData(workbook);
+      const start = url.searchParams.get('start') || today();
+      const end = url.searchParams.get('end') || today();
+      const weekly = buildWeeklyDrafts(data.suppliers, data.products, data.txns, start, end);
+      return json({ ok: true, data: weekly });
+    }
+
     if (context.request.method === 'POST' && path === 'save') {
       const body = await context.request.json();
       const action = body.action;
@@ -91,13 +100,6 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function normalizeKeyName(str) {
-  return String(str || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_');
-}
-
 function cleanValue(v) {
   return v == null ? '' : String(v).trim();
 }
@@ -154,6 +156,10 @@ function ensureSheet(workbook, name) {
     throw new Error(`Sheet ${name} tidak ditemukan`);
   }
   return workbook[name];
+}
+
+function numberFormat(n) {
+  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
 }
 
 /* =========================
@@ -217,24 +223,6 @@ function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }) {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'Gagal update sheet');
-      return data;
-    },
-
-    async batchClear(ranges) {
-      const token = await this.accessToken();
-      const res = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchClear`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ ranges }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || 'Gagal clear sheet');
       return data;
     },
   };
@@ -331,7 +319,7 @@ async function signJwt(unsignedJwt, privateKeyPem) {
 
 async function readSheet(sheets, name) {
   const values = await sheets.valuesGet(name);
-  const headers = (values[0] || []).map((x) => normalizeKeyName(x));
+  const headers = (values[0] || []).map((x) => String(x || '').trim().toLowerCase());
   const rows = (values.slice(1) || []).map((row) => {
     const obj = {};
     headers.forEach((h, i) => {
@@ -374,7 +362,7 @@ function buildBootstrapData(workbook) {
     nama_supplier: r.nama_supplier || '',
     no_wa: r.no_wa || '',
     aktif: (r.aktif || 'YA').toUpperCase(),
-  }));
+  })).filter((x) => x.supplier_id);
 
   const products = productSheet.rows.map((r) => {
     const supplier = suppliers.find((s) => s.supplier_id === r.supplier_id);
@@ -383,9 +371,10 @@ function buildBootstrapData(workbook) {
       supplier_id: r.supplier_id || '',
       nama_supplier: supplier?.nama_supplier || '',
       nama_produk: r.nama_produk || '',
+      hpp: numberValue(r.hpp),
       aktif: (r.aktif || 'YA').toUpperCase(),
     };
-  });
+  }).filter((x) => x.product_id);
 
   const openings = openingSheet.rows.map((r) => ({
     tanggal: r.tanggal || '',
@@ -446,6 +435,7 @@ function buildBootstrapData(workbook) {
     const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
     const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
     const selisih = qty_fisik === '' ? '' : numberValue(qty_fisik) - stok_sistem;
+    const nilai_stok = stok_sistem * numberValue(p.hpp);
 
     let status = 'AMAN';
     if (stok_sistem <= 0) status = 'HABIS';
@@ -457,6 +447,7 @@ function buildBootstrapData(workbook) {
       supplier_id: p.supplier_id,
       nama_supplier: p.nama_supplier,
       nama_produk: p.nama_produk,
+      hpp: numberValue(p.hpp),
       stok_awal,
       in_qty,
       out_qty,
@@ -466,6 +457,7 @@ function buildBootstrapData(workbook) {
       qty_fisik,
       selisih,
       status,
+      nilai_stok,
     };
   });
 
@@ -480,7 +472,7 @@ function buildBootstrapData(workbook) {
 }
 
 /* =========================
-   WA DRAFT
+   WA DRAFT HARIAN
 ========================= */
 
 function buildWaDrafts(suppliers, products, txns, stock, date) {
@@ -556,6 +548,81 @@ function buildWaDrafts(suppliers, products, txns, stock, date) {
         supplier_id: supplier.supplier_id,
         nama_supplier: supplier.nama_supplier,
         no_wa: wa,
+        pesan,
+        link_wa: wa
+          ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}`
+          : '#',
+      };
+    })
+    .filter(Boolean);
+}
+
+/* =========================
+   TAGIHAN MINGGUAN
+========================= */
+
+function buildWeeklyDrafts(suppliers, products, txns, start, end) {
+  const txnsPeriod = txns.filter((x) => x.Tanggal_Input >= start && x.Tanggal_Input <= end);
+  const bySupplier = groupBy(txnsPeriod, 'Supplier_ID');
+
+  return suppliers
+    .filter((supplier) => supplier.aktif === 'YA')
+    .map((supplier) => {
+      const rows = bySupplier[supplier.supplier_id] || [];
+      if (!rows.length) return null;
+
+      const summary = {};
+
+      rows
+        .filter((r) => r.Jenis === 'OUT')
+        .forEach((row) => {
+          const product = products.find((p) => p.product_id === row.Product_ID);
+          const hpp = Number(product?.hpp || 0);
+
+          if (!summary[row.Product_ID]) {
+            summary[row.Product_ID] = {
+              nama_produk: product?.nama_produk || row.Nama_Produk || '-',
+              hpp,
+              qty_keluar: 0,
+              subtotal: 0,
+            };
+          }
+
+          summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
+          summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
+        });
+
+      const items = Object.values(summary).filter((x) => x.qty_keluar > 0);
+      if (!items.length) return null;
+
+      const total_tagihan = items.reduce((a, b) => a + b.subtotal, 0);
+
+      const lines = items.map((item) =>
+        [
+          `- ${item.nama_produk}`,
+          `  HPP: Rp ${numberFormat(item.hpp)}`,
+          `  Qty keluar: ${item.qty_keluar}`,
+          `  Subtotal: Rp ${numberFormat(item.subtotal)}`,
+        ].join('\n')
+      );
+
+      const pesan =
+        `Halo ${supplier.nama_supplier},\n\n` +
+        `Laporan penjualan mingguan:\n` +
+        `Periode ${start} s/d ${end}\n\n` +
+        `${lines.join('\n\n')}\n\n` +
+        `Total tagihan minggu ini: Rp ${numberFormat(total_tagihan)}\n\n` +
+        `Terima kasih.`;
+
+      const wa = normalizePhone(supplier.no_wa);
+
+      return {
+        supplier_id: supplier.supplier_id,
+        nama_supplier: supplier.nama_supplier,
+        no_wa: wa,
+        start,
+        end,
+        total_tagihan,
         pesan,
         link_wa: wa
           ? `https://wa.me/${wa}?text=${encodeURIComponent(pesan)}`
@@ -718,6 +785,7 @@ async function addProduct(sheets, workbook, payload) {
 
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_produk = cleanValue(payload.nama_produk);
+  const hpp = numberValue(payload.hpp);
   const aktif = 'YA';
 
   if (!supplier_id || !nama_produk) {
@@ -730,7 +798,7 @@ async function addProduct(sheets, workbook, payload) {
   }
 
   const product_id = nextId('PRD-', productSheet.rows, 'product_id');
-  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_produk, aktif]]);
+  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_produk, hpp, aktif]]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
 
@@ -739,6 +807,7 @@ async function updateProduct(sheets, workbook, payload) {
   const product_id = cleanValue(payload.product_id);
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_produk = cleanValue(payload.nama_produk);
+  const hpp = numberValue(payload.hpp);
   const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
 
   const idx = productSheet.rows.findIndex((r) => String(r.product_id) === product_id);
@@ -749,7 +818,8 @@ async function updateProduct(sheets, workbook, payload) {
     { range: a1('PRODUK_MASTER', rowNumber, 1), values: [[product_id]] },
     { range: a1('PRODUK_MASTER', rowNumber, 2), values: [[supplier_id]] },
     { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_produk]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[aktif]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[hpp]] },
+    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[aktif]] },
   ];
 
   await sheets.valuesBatchUpdate(updates);
@@ -773,7 +843,7 @@ async function deleteProduct(sheets, workbook, payload) {
 
   await sheets.valuesBatchUpdate([
     { range: a1('PRODUK_MASTER', rowNumber, 3), values: [['[DELETED]']] },
-    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [['TIDAK']] },
+    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [['TIDAK']] },
   ]);
 
   return json({ ok: true, message: 'Produk dihapus / dinonaktifkan' });
