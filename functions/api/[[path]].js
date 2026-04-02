@@ -273,7 +273,10 @@ export async function onRequest(context) {
     }
 
     const path = (params.path || []).join('/');
-
+    
+    if (path === 'cekversi') {
+  return json({ ok: true, version: 'LIVE-TEST-123' });
+}
     if (request.method === 'GET' && path === 'bootstrap') {
       const data = await getAllData(env);
       return json({ ok: true, data: {
