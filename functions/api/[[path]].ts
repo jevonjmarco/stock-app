@@ -15,7 +15,7 @@ export async function onRequest(context: any) {
     const sheets = createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY });
 
     if (context.request.method === 'GET' && path === 'cekversi') {
-      return json({ ok: true, version: 'LIVE-FULL-FIX-WA-2026' });
+      return json({ ok: true, version: 'FULL-FIX-TRANSAKSI-WA-2026' });
     }
 
     if (context.request.method === 'GET' && path === 'bootstrap') {
@@ -43,7 +43,8 @@ export async function onRequest(context: any) {
           supplier_final: cleanId(row.Supplier_ID) || cleanId(product?.supplier_id) || '',
           jenis: row.Jenis,
           qty: row.Qty,
-          nama_produk: product?.nama_produk || row.Nama_Produk || '',
+          nama_supplier: row.Nama_Supplier,
+          nama_produk: row.Nama_Produk,
         };
       });
 
@@ -324,7 +325,9 @@ async function readSheet(sheets: any, name: string) {
   const headers = (values[0] || []).map((x: any) => String(x || '').trim().toLowerCase());
   const rows = (values.slice(1) || []).map((row: any[]) => {
     const obj: any = {};
-    headers.forEach((h: string, i: number) => { obj[h] = row[i] ?? ''; });
+    headers.forEach((h: string, i: number) => {
+      obj[h] = row[i] ?? '';
+    });
     return obj;
   });
   return { headers, rows, raw: values };
@@ -370,13 +373,13 @@ function buildBootstrapData(workbook: any) {
 
   const txns = txnSheet.rows.map((r: any) => ({
     Tanggal_Input: r.tanggal || '',
-    Supplier_ID: r.supplier_id || '',
     Product_ID: r.product_id || '',
+    Supplier_ID: r.supplier_id || '',
+    Nama_Supplier: r.nama_supplier || '',
+    Nama_Produk: r.nama_produk || '',
     Jenis: (r.jenis || '').toUpperCase(),
     Qty: numberValue(r.qty),
-    Keterangan: r.keterangan || '',
     User_Input: r.user_input || '',
-    Nama_Produk: products.find((p: any) => p.product_id === r.product_id)?.nama_produk || '',
   }));
 
   const opnames = opnameSheet.rows.map((r: any) => ({
@@ -398,7 +401,8 @@ function buildBootstrapData(workbook: any) {
     const in_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
     const out_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
     const reject_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
-    const expired_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const expired_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'EXPI').reduce((a: number, b: any) => a + numberValue(b.Qty), 0)
+      + txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'EXPIRED').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
 
     const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
     const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
@@ -471,7 +475,7 @@ function buildWaDrafts(suppliers: any[], products: any[], txns: any[], stock: an
           const masukHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'IN').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
           const keluarHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'OUT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
           const rejectHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'REJECT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
-          const expiredHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'EXPIRED').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const expiredHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && ['EXPI', 'EXPIRED'].includes(String(r.Jenis || '').toUpperCase())).reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
 
           const stokAwal = Number(stockInfo.stok_awal || 0);
           const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
@@ -614,16 +618,37 @@ async function saveTransaction(sheets: any, workbook: any, payload: any) {
   const tanggal = cleanValue(payload.tanggal);
   const supplier_id = cleanValue(payload.supplier_id);
   const product_id = cleanValue(payload.product_id);
-  const jenis = cleanValue(payload.jenis).toUpperCase();
+  const jenisRaw = cleanValue(payload.jenis).toUpperCase();
+  const jenis = jenisRaw === 'EXPIRED' ? 'EXPI' : jenisRaw;
   const qty = numberValue(payload.qty);
-  const keterangan = cleanValue(payload.keterangan);
   const user_input = cleanValue(payload.user_input);
 
   if (!tanggal || !supplier_id || !product_id || !jenis) {
     return json({ ok: false, error: 'Data transaksi belum lengkap' }, 400);
   }
 
-  await sheets.valuesAppend('TRANSAKSI_STOK', [[tanggal, supplier_id, product_id, jenis, qty, keterangan, user_input]]);
+  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+
+  const supplier = supplierSheet.rows.find((r: any) => String(r.supplier_id) === supplier_id);
+  const product = productSheet.rows.find((r: any) => String(r.product_id) === product_id);
+
+  const nama_supplier = supplier?.nama_supplier || product?.nama_supplier || '';
+  const nama_produk = product?.nama_produk || '';
+
+  // FORMAT SHEET:
+  // tanggal | product_id | supplier_id | nama_supplier | nama_produk | jenis | qty | user_input
+  await sheets.valuesAppend('TRANSAKSI_STOK', [[
+    tanggal,
+    product_id,
+    supplier_id,
+    nama_supplier,
+    nama_produk,
+    jenis,
+    qty,
+    user_input
+  ]]);
+
   return json({ ok: true, message: 'Transaksi disimpan' });
 }
 
@@ -721,6 +746,7 @@ async function addProduct(sheets: any, workbook: any, payload: any) {
 
   const product_id = nextId('PRD-', productSheet.rows, 'product_id');
   const nama_supplier = supplier.nama_supplier || '';
+
   await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_supplier, nama_produk, hpp, 'YA']]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
