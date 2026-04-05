@@ -15,7 +15,7 @@ export async function onRequest(context: any) {
     const sheets = createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY });
 
     if (context.request.method === 'GET' && path === 'cekversi') {
-      return json({ ok: true, version: 'FULL-REVISION-TRANSAKSI-2026-04-05' });
+      return json({ ok: true, version: 'HEADER-SAFE-PRODUK-HPP-2026-04-05' });
     }
 
     if (context.request.method === 'GET' && path === 'bootstrap') {
@@ -132,6 +132,10 @@ function numberValue(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function numberFormat(n: any) {
+  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
+}
+
 function groupBy(arr: any[], key: string) {
   return arr.reduce((acc: any, item: any) => {
     const k = item[key];
@@ -139,10 +143,6 @@ function groupBy(arr: any[], key: string) {
     acc[k].push(item);
     return acc;
   }, {});
-}
-
-function numberFormat(n: any) {
-  return new Intl.NumberFormat('id-ID').format(Number(n || 0));
 }
 
 function colToLetter(col: number) {
@@ -181,6 +181,36 @@ function normalizePhone(raw: any) {
 function ensureSheet(workbook: any, name: string) {
   if (!workbook[name]) throw new Error(`Sheet ${name} tidak ditemukan`);
   return workbook[name];
+}
+
+function getHeaderIndexMap(headers: string[]) {
+  const map: any = {};
+  headers.forEach((h, i) => {
+    map[String(h || '').trim().toLowerCase()] = i + 1;
+  });
+  return map;
+}
+
+function requireHeaderCol(sheet: any, headerName: string) {
+  const map = getHeaderIndexMap(sheet.headers || []);
+  const col = map[headerName.toLowerCase()];
+  if (!col) throw new Error(`Header "${headerName}" tidak ditemukan di sheet`);
+  return col;
+}
+
+function buildRowByHeaders(headers: string[], valuesMap: Record<string, any>) {
+  return headers.map((h) => {
+    const key = String(h || '').trim().toLowerCase();
+    return valuesMap[key] ?? '';
+  });
+}
+
+function cleanId(v: any) {
+  return String(v || '').trim();
+}
+
+function normalizeDate(v: any) {
+  return String(v || '').trim().slice(0, 10);
 }
 
 function createSheetsClient({ SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY }: any) {
@@ -361,8 +391,8 @@ function buildBootstrapData(workbook: any) {
     supplier_id: r.supplier_id || '',
     nama_supplier: r.nama_supplier || (suppliers.find((s: any) => s.supplier_id === r.supplier_id)?.nama_supplier || ''),
     nama_produk: r.nama_produk || '',
-    hpp: numberValue(r.hpp),
     aktif: (r.aktif || 'YA').toUpperCase(),
+    hpp: numberValue(r.hpp),
   })).filter((x: any) => x.product_id);
 
   const openings = openingSheet.rows.map((r: any) => ({
@@ -402,21 +432,10 @@ function buildBootstrapData(workbook: any) {
   const stock = products.map((p: any) => {
     const stok_awal = numberValue(latestOpeningMap[p.product_id]?.qty || 0);
 
-    const in_qty = txns
-      .filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'IN')
-      .reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
-
-    const out_qty = txns
-      .filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'OUT')
-      .reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
-
-    const reject_qty = txns
-      .filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'REJECT')
-      .reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
-
-    const expired_qty = txns
-      .filter((x: any) => x.Product_ID === p.product_id && ['EXPI', 'EXPIRED'].includes(x.Jenis))
-      .reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const in_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'IN').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const out_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'OUT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const reject_qty = txns.filter((x: any) => x.Product_ID === p.product_id && x.Jenis === 'REJECT').reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
+    const expired_qty = txns.filter((x: any) => x.Product_ID === p.product_id && ['EXPI', 'EXPIRED'].includes(x.Jenis)).reduce((a: number, b: any) => a + numberValue(b.Qty), 0);
 
     const stok_sistem = stok_awal + in_qty - out_qty - reject_qty - expired_qty;
     const qty_fisik = latestOpnameMap[p.product_id]?.qty_fisik ?? '';
@@ -433,6 +452,7 @@ function buildBootstrapData(workbook: any) {
       supplier_id: p.supplier_id,
       nama_supplier: p.nama_supplier,
       nama_produk: p.nama_produk,
+      aktif: p.aktif,
       hpp: numberValue(p.hpp),
       stok_awal,
       in_qty,
@@ -451,9 +471,6 @@ function buildBootstrapData(workbook: any) {
 }
 
 function buildWaDrafts(suppliers: any[], products: any[], txns: any[], stock: any[], date: string) {
-  const normalizeDate = (v: any) => String(v || '').trim().slice(0, 10);
-  const cleanId = (v: any) => String(v || '').trim();
-
   const txnsToday = txns.filter((x: any) => normalizeDate(x.Tanggal_Input) === normalizeDate(date));
 
   const rowsWithSupplier = txnsToday.map((row: any) => {
@@ -486,21 +503,10 @@ function buildWaDrafts(suppliers: any[], products: any[], txns: any[], stock: an
         const stockInfo = stock.find((s: any) => cleanId(s.product_id) === cleanId(row.Product_ID)) || {};
 
         if (!productSummary[row.Product_ID]) {
-          const masukHariIni = rows
-            .filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'IN')
-            .reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
-
-          const keluarHariIni = rows
-            .filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'OUT')
-            .reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
-
-          const rejectHariIni = rows
-            .filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'REJECT')
-            .reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
-
-          const expiredHariIni = rows
-            .filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && ['EXPI', 'EXPIRED'].includes(String(r.Jenis || '').toUpperCase()))
-            .reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const masukHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'IN').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const keluarHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'OUT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const rejectHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && String(r.Jenis || '').toUpperCase() === 'REJECT').reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
+          const expiredHariIni = rows.filter((r: any) => cleanId(r.Product_ID) === cleanId(row.Product_ID) && ['EXPI', 'EXPIRED'].includes(String(r.Jenis || '').toUpperCase())).reduce((a: number, b: any) => a + Number(b.Qty || 0), 0);
 
           const stokAwal = Number(stockInfo.stok_awal || 0);
           const sisaStokSekarang = stokAwal + masukHariIni - keluarHariIni - rejectHariIni - expiredHariIni;
@@ -559,24 +565,22 @@ function buildWeeklyDrafts(suppliers: any[], products: any[], txns: any[], start
       if (!rows.length) return null;
 
       const summary: any = {};
-      rows
-        .filter((r: any) => r.Jenis === 'OUT')
-        .forEach((row: any) => {
-          const product = products.find((p: any) => p.product_id === row.Product_ID);
-          const hpp = Number(product?.hpp || 0);
+      rows.filter((r: any) => r.Jenis === 'OUT').forEach((row: any) => {
+        const product = products.find((p: any) => p.product_id === row.Product_ID);
+        const hpp = Number(product?.hpp || 0);
 
-          if (!summary[row.Product_ID]) {
-            summary[row.Product_ID] = {
-              nama_produk: product?.nama_produk || row.Nama_Produk || '-',
-              hpp,
-              qty_keluar: 0,
-              subtotal: 0,
-            };
-          }
+        if (!summary[row.Product_ID]) {
+          summary[row.Product_ID] = {
+            nama_produk: product?.nama_produk || row.Nama_Produk || '-',
+            hpp,
+            qty_keluar: 0,
+            subtotal: 0,
+          };
+        }
 
-          summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
-          summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
-        });
+        summary[row.Product_ID].qty_keluar += Number(row.Qty || 0);
+        summary[row.Product_ID].subtotal = summary[row.Product_ID].qty_keluar * hpp;
+      });
 
       const items = Object.values(summary).filter((x: any) => x.qty_keluar > 0);
       if (!items.length) return null;
@@ -633,20 +637,30 @@ async function saveOpening(sheets: any, workbook: any, payload: any) {
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
     await sheets.valuesBatchUpdate([
-      { range: a1('STOK_AWAL', rowNumber, 1), values: [[tanggal]] },
-      { range: a1('STOK_AWAL', rowNumber, 2), values: [[supplier_id]] },
-      { range: a1('STOK_AWAL', rowNumber, 3), values: [[product_id]] },
-      { range: a1('STOK_AWAL', rowNumber, 4), values: [[qty]] },
-      { range: a1('STOK_AWAL', rowNumber, 5), values: [[user_input]] },
+      { range: a1('STOK_AWAL', rowNumber, requireHeaderCol(sheet, 'tanggal')), values: [[tanggal]] },
+      { range: a1('STOK_AWAL', rowNumber, requireHeaderCol(sheet, 'supplier_id')), values: [[supplier_id]] },
+      { range: a1('STOK_AWAL', rowNumber, requireHeaderCol(sheet, 'product_id')), values: [[product_id]] },
+      { range: a1('STOK_AWAL', rowNumber, requireHeaderCol(sheet, 'qty')), values: [[qty]] },
+      { range: a1('STOK_AWAL', rowNumber, requireHeaderCol(sheet, 'user_input')), values: [[user_input]] },
     ]);
     return json({ ok: true, message: 'Stok awal diperbarui' });
   }
 
-  await sheets.valuesAppend('STOK_AWAL', [[tanggal, supplier_id, product_id, qty, user_input]]);
+  const row = buildRowByHeaders(sheet.headers, {
+    tanggal,
+    supplier_id,
+    product_id,
+    qty,
+    user_input,
+  });
+
+  await sheets.valuesAppend('STOK_AWAL', [row]);
   return json({ ok: true, message: 'Stok awal disimpan' });
 }
 
 async function saveTransaction(sheets: any, workbook: any, payload: any) {
+  const sheet = ensureSheet(workbook, 'TRANSAKSI_STOK');
+
   const tanggal = cleanValue(payload.tanggal);
   const supplier_id = cleanValue(payload.supplier_id);
   const product_id = cleanValue(payload.product_id);
@@ -669,8 +683,8 @@ async function saveTransaction(sheets: any, workbook: any, payload: any) {
   const nama_supplier = supplier?.nama_supplier || product?.nama_supplier || '';
   const nama_produk = product?.nama_produk || '';
 
-  await sheets.valuesAppend('TRANSAKSI_STOK', [[
-    tanggal,
+  const row = buildRowByHeaders(sheet.headers, {
+    tanggal_input: tanggal,
     product_id,
     supplier_id,
     nama_supplier,
@@ -678,9 +692,10 @@ async function saveTransaction(sheets: any, workbook: any, payload: any) {
     jenis,
     qty,
     catatan,
-    user_input
-  ]]);
+    user_input,
+  });
 
+  await sheets.valuesAppend('TRANSAKSI_STOK', [row]);
   return json({ ok: true, message: 'Transaksi disimpan' });
 }
 
@@ -701,21 +716,29 @@ async function saveOpname(sheets: any, workbook: any, payload: any) {
   if (existingIndex >= 0) {
     const rowNumber = existingIndex + 2;
     await sheets.valuesBatchUpdate([
-      { range: a1('OPNAME_FISIK', rowNumber, 1), values: [[tanggal]] },
-      { range: a1('OPNAME_FISIK', rowNumber, 2), values: [[supplier_id]] },
-      { range: a1('OPNAME_FISIK', rowNumber, 3), values: [[product_id]] },
-      { range: a1('OPNAME_FISIK', rowNumber, 4), values: [[qty_fisik]] },
-      { range: a1('OPNAME_FISIK', rowNumber, 5), values: [[user_input]] },
+      { range: a1('OPNAME_FISIK', rowNumber, requireHeaderCol(sheet, 'tanggal')), values: [[tanggal]] },
+      { range: a1('OPNAME_FISIK', rowNumber, requireHeaderCol(sheet, 'supplier_id')), values: [[supplier_id]] },
+      { range: a1('OPNAME_FISIK', rowNumber, requireHeaderCol(sheet, 'product_id')), values: [[product_id]] },
+      { range: a1('OPNAME_FISIK', rowNumber, requireHeaderCol(sheet, 'qty_fisik')), values: [[qty_fisik]] },
+      { range: a1('OPNAME_FISIK', rowNumber, requireHeaderCol(sheet, 'user_input')), values: [[user_input]] },
     ]);
     return json({ ok: true, message: 'Opname diperbarui' });
   }
 
-  await sheets.valuesAppend('OPNAME_FISIK', [[tanggal, supplier_id, product_id, qty_fisik, user_input]]);
+  const row = buildRowByHeaders(sheet.headers, {
+    tanggal,
+    supplier_id,
+    product_id,
+    qty_fisik,
+    user_input,
+  });
+
+  await sheets.valuesAppend('OPNAME_FISIK', [row]);
   return json({ ok: true, message: 'Opname disimpan' });
 }
 
 async function addSupplier(sheets: any, workbook: any, payload: any) {
-  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const sheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const nama_supplier = cleanValue(payload.nama_supplier);
   const no_wa = normalizePhone(payload.no_wa);
 
@@ -723,35 +746,44 @@ async function addSupplier(sheets: any, workbook: any, payload: any) {
     return json({ ok: false, error: 'Nama supplier wajib diisi' }, 400);
   }
 
-  const supplier_id = nextId('SUP-', supplierSheet.rows, 'supplier_id');
-  await sheets.valuesAppend('SUPPLIER_MASTER', [[supplier_id, nama_supplier, no_wa, 'YA']]);
+  const supplier_id = nextId('SUP-', sheet.rows, 'supplier_id');
+
+  const row = buildRowByHeaders(sheet.headers, {
+    supplier_id,
+    nama_supplier,
+    no_wa,
+    aktif: 'YA',
+  });
+
+  await sheets.valuesAppend('SUPPLIER_MASTER', [row]);
   return json({ ok: true, message: 'Supplier ditambahkan' });
 }
 
 async function updateSupplier(sheets: any, workbook: any, payload: any) {
-  const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const sheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
   const supplier_id = cleanValue(payload.supplier_id);
   const nama_supplier = cleanValue(payload.nama_supplier);
   const no_wa = normalizePhone(payload.no_wa);
   const aktif = cleanValue(payload.aktif || 'YA').toUpperCase();
 
-  const idx = supplierSheet.rows.findIndex((r: any) => String(r.supplier_id) === supplier_id);
+  const idx = sheet.rows.findIndex((r: any) => String(r.supplier_id) === supplier_id);
   if (idx === -1) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
   await sheets.valuesBatchUpdate([
-    { range: a1('SUPPLIER_MASTER', rowNumber, 1), values: [[supplier_id]] },
-    { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [[nama_supplier]] },
-    { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [[no_wa]] },
-    { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [[aktif]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(sheet, 'supplier_id')), values: [[supplier_id]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(sheet, 'nama_supplier')), values: [[nama_supplier]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(sheet, 'no_wa')), values: [[no_wa]] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(sheet, 'aktif')), values: [[aktif]] },
   ]);
+
   return json({ ok: true, message: 'Supplier berhasil diperbarui' });
 }
 
 async function deleteSupplier(sheets: any, workbook: any, payload: any) {
-  const supplier_id = cleanValue(payload.supplier_id);
   const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
+  const supplier_id = cleanValue(payload.supplier_id);
 
   const hasActiveProducts = productSheet.rows.some(
     (r: any) => String(r.supplier_id) === supplier_id && String(r.aktif || 'YA').toUpperCase() === 'YA'
@@ -766,15 +798,16 @@ async function deleteSupplier(sheets: any, workbook: any, payload: any) {
 
   const rowNumber = idx + 2;
   await sheets.valuesBatchUpdate([
-    { range: a1('SUPPLIER_MASTER', rowNumber, 2), values: [['[DELETED]']] },
-    { range: a1('SUPPLIER_MASTER', rowNumber, 3), values: [['']] },
-    { range: a1('SUPPLIER_MASTER', rowNumber, 4), values: [['TIDAK']] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(supplierSheet, 'nama_supplier')), values: [['[DELETED]']] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(supplierSheet, 'no_wa')), values: [['']] },
+    { range: a1('SUPPLIER_MASTER', rowNumber, requireHeaderCol(supplierSheet, 'aktif')), values: [['TIDAK']] },
   ]);
+
   return json({ ok: true, message: 'Supplier dinonaktifkan / dihapus' });
 }
 
 async function addProduct(sheets: any, workbook: any, payload: any) {
-  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const sheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
 
   const supplier_id = cleanValue(payload.supplier_id);
@@ -788,15 +821,24 @@ async function addProduct(sheets: any, workbook: any, payload: any) {
   const supplier = supplierSheet.rows.find((r: any) => String(r.supplier_id) === supplier_id);
   if (!supplier) return json({ ok: false, error: 'Supplier tidak ditemukan' }, 404);
 
-  const product_id = nextId('PRD-', productSheet.rows, 'product_id');
+  const product_id = nextId('PRD-', sheet.rows, 'product_id');
   const nama_supplier = supplier.nama_supplier || '';
 
-  await sheets.valuesAppend('PRODUK_MASTER', [[product_id, supplier_id, nama_supplier, nama_produk, hpp, 'YA']]);
+  const row = buildRowByHeaders(sheet.headers, {
+    product_id,
+    supplier_id,
+    nama_supplier,
+    nama_produk,
+    aktif: 'YA',
+    hpp,
+  });
+
+  await sheets.valuesAppend('PRODUK_MASTER', [row]);
   return json({ ok: true, message: 'Produk ditambahkan' });
 }
 
 async function updateProduct(sheets: any, workbook: any, payload: any) {
-  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
+  const sheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const supplierSheet = ensureSheet(workbook, 'SUPPLIER_MASTER');
 
   const product_id = cleanValue(payload.product_id);
@@ -808,22 +850,24 @@ async function updateProduct(sheets: any, workbook: any, payload: any) {
   const supplier = supplierSheet.rows.find((r: any) => String(r.supplier_id) === supplier_id);
   const nama_supplier = supplier?.nama_supplier || '';
 
-  const idx = productSheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
+  const idx = sheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
   await sheets.valuesBatchUpdate([
-    { range: a1('PRODUK_MASTER', rowNumber, 1), values: [[product_id]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 2), values: [[supplier_id]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 3), values: [[nama_supplier]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [[nama_produk]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 5), values: [[hpp]] },
-    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [[aktif]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'product_id')), values: [[product_id]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'supplier_id')), values: [[supplier_id]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'nama_supplier')), values: [[nama_supplier]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'nama_produk')), values: [[nama_produk]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'aktif')), values: [[aktif]] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'hpp')), values: [[hpp]] },
   ]);
+
   return json({ ok: true, message: 'Produk berhasil diperbarui' });
 }
 
 async function deleteProduct(sheets: any, workbook: any, payload: any) {
+  const sheet = ensureSheet(workbook, 'PRODUK_MASTER');
   const product_id = cleanValue(payload.product_id);
   const data = buildBootstrapData(workbook);
   const stockInfo = data.stock.find((x: any) => x.product_id === product_id);
@@ -832,14 +876,13 @@ async function deleteProduct(sheets: any, workbook: any, payload: any) {
     return json({ ok: false, error: 'Produk masih punya stok. Kosongkan dulu sebelum hapus.' }, 400);
   }
 
-  const productSheet = ensureSheet(workbook, 'PRODUK_MASTER');
-  const idx = productSheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
+  const idx = sheet.rows.findIndex((r: any) => String(r.product_id) === product_id);
   if (idx === -1) return json({ ok: false, error: 'Produk tidak ditemukan' }, 404);
 
   const rowNumber = idx + 2;
   await sheets.valuesBatchUpdate([
-    { range: a1('PRODUK_MASTER', rowNumber, 4), values: [['[DELETED]']] },
-    { range: a1('PRODUK_MASTER', rowNumber, 6), values: [['TIDAK']] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'nama_produk')), values: [['[DELETED]']] },
+    { range: a1('PRODUK_MASTER', rowNumber, requireHeaderCol(sheet, 'aktif')), values: [['TIDAK']] },
   ]);
 
   return json({ ok: true, message: 'Produk dihapus / dinonaktifkan' });
